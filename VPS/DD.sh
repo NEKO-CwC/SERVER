@@ -6,12 +6,12 @@
 # 作者：基于 bin456789/reinstall 二次封装
 # =============================================================================
 
-set -euo pipefail
+# set -euo pipefail
 
 # 配置常量
 readonly SCRIPT_NAME="${0##*/}"
 readonly ROOT_PASSWORD="Zrc_20050905"
-readonly SSH_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICiBMtlUZ4+l0NqxpJ/FvNqP5CaQNN3mZeWzoB0PGGFH"
+SSH_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICiBMtlUZ4+l0NqxpJ/FvNqP5CaQNN3mZeWzoB0PGGFH"
 readonly TARGET_REPO="https://github.com/NEKO-CwC/SERVER"
 readonly OH_MY_BASH_THEME="developer"
 
@@ -531,6 +531,7 @@ EOF
 # =============================================================================
 
 main() {
+  
     log_info "开始执行 Debian 自动安装配置脚本"
     
     # 前置检查
