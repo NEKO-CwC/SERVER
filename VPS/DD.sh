@@ -312,115 +312,9 @@ install_debian_system() {
     log_info "调用 reinstall.sh 安装 Debian..."
     log_warn "安装过程中系统将重启，请耐心等待..."
     
-    # 尝试自动化配置方案
-    if attempt_automated_config; then
-        log_info "使用自动化配置方案"
-        /tmp/reinstall.sh debian \
-            --password="$ROOT_PASSWORD" \
-            --ssh-key="$SSH_PUBLIC_KEY" || error_exit "Debian 安装失败"
-    else
-        log_info "使用标准安装，稍后需要手动配置"
-        /tmp/reinstall.sh debian \
-            --password="$ROOT_PASSWORD" \
-            --ssh-key="$SSH_PUBLIC_KEY" || error_exit "Debian 安装失败"
-    fi
-}
-
-# 尝试自动化配置方案
-attempt_automated_config() {
-    log_step "检查自动化配置可行性..."
-    
-    # 创建配置脚本的压缩版本
-    local config_url
-    if config_url=$(upload_config_script); then
-        log_info "配置脚本已上传，URL: $config_url"
-        
-        # 创建包含自动配置命令的SSH密钥
-        local auto_ssh_key
-        auto_ssh_key="command=\"bash -c 'wget -qO- $config_url | bash || curl -fsSL $config_url | bash; exec \\\$SSH_ORIGINAL_COMMAND'\" $SSH_PUBLIC_KEY"
-        
-        # 临时替换SSH密钥变量
-        SSH_PUBLIC_KEY="$auto_ssh_key"
-        return 0
-    else
-        log_warn "无法上传配置脚本，将使用手动配置方案"
-        return 1
-    fi
-}
-
-# 上传配置脚本到在线服务
-upload_config_script() {
-    log_info "尝试上传配置脚本到在线服务..."
-    
-    # 方法1: 使用 transfer.sh (24小时有效)
-    if command -v curl >/dev/null 2>&1; then
-        local upload_url
-        if upload_url=$(curl --upload-file /tmp/post-install-config.sh https://transfer.sh/post-install-config.sh 2>/dev/null); then
-            echo "$upload_url"
-            return 0
-        fi
-    fi
-    
-    # 方法2: 使用 0x0.st (永久有效，但可能被删除)
-    if upload_url=$(curl -F'file=@/tmp/post-install-config.sh' https://0x0.st 2>/dev/null); then
-        echo "$upload_url"
-        return 0
-    fi
-    
-    # 方法3: 使用 catbox.moe (永久有效)
-    if upload_url=$(curl -F'reqtype=fileupload' -F'fileToUpload=@/tmp/post-install-config.sh' https://catbox.moe/user/api.php 2>/dev/null); then
-        echo "https://files.catbox.moe/$upload_url"
-        return 0
-    fi
-    
-    return 1
-}
-
-# 创建在线配置脚本服务
-create_online_config_service() {
-    log_step "创建在线配置脚本..."
-    
-    # 将配置脚本编码为base64以便传输
-    local config_script_b64
-    config_script_b64=$(base64 -w 0 /tmp/post-install-config.sh)
-    
-    # 创建一个简单的获取脚本，将在新系统中执行
-    local fetch_script=$(cat << 'FETCH_EOF'
-#!/bin/bash
-# 自动配置获取和执行脚本
-
-set -euo pipefail
-
-CONFIG_URL="https://transfer.sh/get/CONFIG_ID/post-install.sh"
-CONFIG_B64="CONFIG_SCRIPT_B64"
-SCRIPT_PATH="/usr/local/bin/post-install-config.sh"
-
-echo "[$(date)] 开始自动配置..."
-
-# 方法1: 从base64直接解码（最可靠）
-if echo "$CONFIG_B64" | base64 -d > "$SCRIPT_PATH" 2>/dev/null; then
-    echo "[$(date)] 配置脚本已从内嵌数据加载"
-    chmod +x "$SCRIPT_PATH"
-    "$SCRIPT_PATH" 2>&1 | tee -a /var/log/auto-config.log
-    rm -f "$SCRIPT_PATH"
-    echo "[$(date)] 自动配置完成"
-else
-    echo "[$(date)] 配置脚本加载失败，请手动运行配置"
-fi
-
-# 清理自身
-rm -f /etc/systemd/system/auto-config.service
-rm -f "$0"
-FETCH_EOF
-    )
-    
-    # 替换占位符
-    fetch_script=${fetch_script//CONFIG_SCRIPT_B64/$config_script_b64}
-    
-    echo "$fetch_script" > /tmp/fetch-config.sh
-    chmod +x /tmp/fetch-config.sh
-    
-    log_info "在线配置脚本已准备完成"
+    /tmp/reinstall.sh debian \
+        --password="$ROOT_PASSWORD" \
+        --ssh-key="$SSH_PUBLIC_KEY" || error_exit "Debian 安装失败"
 }
 
 # 注入自动配置机制
@@ -453,77 +347,32 @@ EOF
 show_completion_info() {
     log_step "安装配置完成！"
     
-    # 检查是否使用了自动化配置
-    if [[ "$SSH_PUBLIC_KEY" =~ ^command= ]]; then
-        cat << EOF
+    local config_b64
+    config_b64=$(base64 -w 0 /tmp/post-install-config.sh)
+    
+    cat << EOF
 
-${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
-${GREEN}                        🚀 自动化安装完成 🚀                              ${NC}
-${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        Debian Installation Complete                        
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📋 ${BLUE}系统信息${NC}
-   • 操作系统: Debian 12 (最新版)
-   • Root密码: $ROOT_PASSWORD
-   • SSH公钥: 已配置 (含自动配置功能)
+System Info:
+   • OS: Debian 12 (Latest)
+   • Root Password: $ROOT_PASSWORD
+   • SSH Key: Configured
 
-🤖 ${BLUE}自动化配置${NC}
-   • ✅ 自动配置已启用
-   • 🔄 首次SSH登录时将自动执行配置
-   • 📦 将自动安装: Git, Oh-My-Bash, 目标仓库
-   • 🎨 将自动配置: MOTD, Bash主题 (developer)
+To complete setup, SSH to your server and run:
+echo '$config_b64' | base64 -d | bash
 
-⚡ ${BLUE}使用说明${NC}
-   1. 等待系统完成重启
-   2. 使用SSH密钥连接服务器
-   3. 系统将自动开始配置过程
-   4. 配置完成后重新登录查看效果
+This will install:
+   • Git and development tools
+   • Oh-My-Bash (theme: $OH_MY_BASH_THEME)
+   • Clone repository: $TARGET_REPO
+   • Configure custom MOTD
 
-📝 ${BLUE}注意事项${NC}
-   • 首次登录可能需要等待几分钟完成配置
-   • 配置过程中请勿中断连接
-   • 配置完成后会看到自定义的MOTD界面
-
-${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 EOF
-    else
-        # 手动配置方案
-        local config_b64
-        config_b64=$(base64 -w 0 /tmp/post-install-config.sh)
-        
-        cat << EOF
-
-${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
-${GREEN}                        📋 手动配置方案 📋                                ${NC}
-${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
-
-📋 ${BLUE}系统信息${NC}
-   • 操作系统: Debian 12 (最新版)
-   • Root密码: $ROOT_PASSWORD
-   • SSH公钥: 已配置
-
-🔧 ${BLUE}完成配置的方法${NC}
-   ${YELLOW}方法1: 一键配置命令${NC}
-   登录新系统后执行：
-   ${BLUE}echo '$config_b64' | base64 -d | bash${NC}
-
-   ${YELLOW}方法2: 分步手动配置${NC}
-   1. 更新系统: apt update && apt upgrade -y
-   2. 安装基础软件: apt install -y git curl vim htop
-   3. 安装 Oh-My-Bash: curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh | bash
-   4. 克隆仓库: git clone $TARGET_REPO
-   5. 设置主题: 编辑 ~/.bashrc 设置 OSH_THEME="$OH_MY_BASH_THEME"
-   6. 配置MOTD: 编辑 /etc/motd 添加自定义欢迎界面
-
-📝 ${BLUE}注意事项${NC}
-   • 推荐使用方法1，最简单可靠
-   • 配置完成后重新登录查看效果
-   • 所有配置都会保存在 /var/log/post-install.log
-
-${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
-
-EOF
-    fi
 }
 
 # =============================================================================
