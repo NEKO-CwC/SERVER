@@ -1,13 +1,33 @@
 #!/bin/bash
 
 readonly TARGET_REPO="https://github.com/NEKO-CwC/SERVER"
+readonly OH_MY_BASH_THEME="developer"
+
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[0;33m'
+readonly RED='\033[0;31m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m' # No Color
 
 log_info() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}[INFO]${NC} $1" >&2
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
 }
 
 log_error() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" | tee -a "$LOG_FILE"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_step() {
+    echo -e "${BLUE}[STEP]${NC} $1" >&2
+}
+
+error_exit() {
+    log_error "$1"
+    exit 1
 }
 
 # 设置 oh-my-bash 主题
