@@ -123,7 +123,7 @@ services:
     command: -D /var/lib/sing-box -C /etc/sing-box/ run
     network_mode: host
 EOF
-docker compose up -d
+docker-compose up 
 
 log_info "启动 substore 容器..."
 cd /root
