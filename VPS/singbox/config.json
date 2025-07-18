@@ -1,0 +1,217 @@
+{
+	"log": {
+		"disabled": false,
+		"level": "warn",
+		"timestamp": true
+	},
+	"dns": {
+		"servers": [
+			{
+				"type": "h3",
+				"tag": "cloudflare",
+				"server": "1.1.1.1",
+				"detour": "select"
+			},
+			{
+				"type": "h3",
+				"tag": "google",
+				"server": "8.8.8.8",
+				"detour": "select"
+			},
+			{
+				"type": "quic",
+				"tag": "local",
+				"server": "223.5.5.5"
+			},
+			{
+				"type": "fakeip",
+				"tag": "fakeip",
+				"inet4_range": "198.18.0.0/15",
+				"inet6_range": "fc00::/18"
+			}
+		],
+		"rules": [
+			{
+				"type": "logical",
+				"mode": "and",
+				"rules": [
+					{
+						"rule_set": "geosite-geolocation-!cn",
+						"invert": true
+					},
+					{
+						"rule_set": "geoip-cn"
+					}
+				],
+				"server": "local"
+			},
+			{
+				"query_type": [
+					"A",
+					"AAAA"
+				],
+				"server": "fakeip"
+			}
+		],
+		"independent_cache": true
+	},
+	"inbounds": [
+		{
+			"type": "tun",
+			"tag": "tun-in",
+			"address": [
+				"172.18.0.1/30",
+				"fdfe:dcba:9876::1/126"
+			],
+			"mtu": 9000,
+			"auto_route": true,
+			"strict_route": true
+		}
+	],
+	"outbounds": [
+		{
+			"type": "selector",
+			"tag": "select",
+			"outbounds": [
+				"🇭🇰GCP-HK",
+				"🇹🇼GCP-TW",
+				"🇯🇵GCP-JP",
+				"🇸🇬GCP-SG",
+				"🇭🇰Ready-HK",
+				"🇸🇬Ready-SG"
+			],
+			"interrupt_exist_connections": true
+		},
+		{
+			"type": "anytls",
+			"tag": "🇭🇰GCP-HK",
+			"server": "gcp-hk.pku.pp.ua",
+			"server_port": 8443,
+			"password": "8JCsPssfgS8tiRwiMlhARg==",
+			"tls": {
+				"enabled": true,
+				"server_name": "gcp-hk.pku.pp.ua"
+			}
+		},
+		{
+			"type": "anytls",
+			"tag": "🇹🇼GCP-TW",
+			"server": "gcp-tw.pku.pp.ua",
+			"server_port": 8443,
+			"password": "8JCsPssfgS8tiRwiMlhARg==",
+			"tls": {
+				"enabled": true,
+				"server_name": "gcp-tw.pku.pp.ua"
+			}
+		},
+		{
+			"type": "anytls",
+			"tag": "🇯🇵GCP-JP",
+			"server": "gcp-jp.pku.pp.ua",
+			"server_port": 8443,
+			"password": "8JCsPssfgS8tiRwiMlhARg==",
+			"tls": {
+				"enabled": true,
+				"server_name": "gcp-jp.pku.pp.ua"
+			}
+		},
+		{
+			"type": "anytls",
+			"tag": "🇸🇬GCP-SG",
+			"server": "gcp-sg.pku.pp.ua",
+			"server_port": 8443,
+			"password": "8JCsPssfgS8tiRwiMlhARg==",
+			"tls": {
+				"enabled": true,
+				"server_name": "gcp-sg.pku.pp.ua"
+			}
+		},
+		{
+			"type": "anytls",
+			"tag": "🇭🇰Ready-HK",
+			"server": "gcp-hk.pku.pp.ua",
+			"server_port": 8443,
+			"password": "8JCsPssfgS8tiRwiMlhARg==ready-hk",
+			"tls": {
+				"enabled": true,
+				"server_name": "gcp-hk.pku.pp.ua"
+			}
+		},
+		{
+			"type": "anytls",
+			"tag": "🇸🇬Ready-SG",
+			"server": "gcp-hk.pku.pp.ua",
+			"server_port": 8443,
+			"password": "8JCsPssfgS8tiRwiMlhARg==ready-sg",
+			"tls": {
+				"enabled": true,
+				"server_name": "gcp-hk.pku.pp.ua"
+			}
+		},
+		{
+			"type": "direct",
+			"tag": "direct"
+		}
+	],
+	"route": {
+		"rules": [
+			{
+				"action": "sniff"
+			},
+			{
+				"protocol": "dns",
+				"action": "hijack-dns"
+			},
+			{
+				"ip_is_private": true,
+				"outbound": "direct"
+			},
+			{
+				"domain_suffix": [
+					"u3.ucweb.com"
+				],
+				"action": "reject"
+			},
+			{
+				"rule_set": "geoip-cn",
+				"outbound": "direct"
+			},
+			{
+				"protocol": "quic",
+				"action": "reject"
+			}
+		],
+		"rule_set": [
+			{
+				"type": "remote",
+				"tag": "geosite-geolocation-cn",
+				"format": "binary",
+				"url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+			},
+			{
+				"type": "remote",
+				"tag": "geosite-geolocation-!cn",
+				"format": "binary",
+				"url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+			},
+			{
+				"type": "remote",
+				"tag": "geoip-cn",
+				"format": "binary",
+				"url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+			}
+		],
+		"auto_detect_interface": true,
+		"default_domain_resolver": "local"
+	},
+	"experimental": {
+		"cache_file": {
+			"enabled": true,
+			"store_fakeip": true,
+			"store_rdrc": true
+		},
+		"clash_api": {
+			"external_controller": "127.0.0.1:9090"
+		}
+	}
+}
