@@ -30,7 +30,22 @@ error_exit() {
     exit 1
 }
 
+# 检查依赖
+check_dependencies() {
+    local missing_dependencies=()
 
+    for dep in curl wget; do
+        if ! command -v "$dep" &>/dev/null; then
+            missing_dependencies+=("$dep")
+        fi
+    done
+
+    if [[ ${#missing_dependencies[@]} -ne 0 ]]; then
+        log_error "缺少以下依赖: ${missing_dependencies[*]}"
+        log_info "请安装缺少的依赖后重试"
+        exit 1
+    fi
+}
 # 获取reinstall.sh下载链接
 get_reinstall_url() {
     if detect_china_network; then
