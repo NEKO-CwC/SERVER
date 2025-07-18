@@ -1,21 +1,18 @@
 #!/bin/bash
 
-# Sing-box 代理服务一键部署脚本
-# 自动完成证书申请、服务端配置、客户端配置生成
+# Sing-box 客户端配置生成器 (macOS)
+# 根据服务端配置生成对应的客户端配置
 
 set -e
 
 DOMAIN="284072.xyz"
-PROJECT_DIR="/opt/singbox-proxy"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="./client_configs"
+SERVER_INFO_FILE="../config/server_info.json"
 
 # 颜色输出
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
 NC='\033[0m'
 
 log_info() {
@@ -26,520 +23,710 @@ log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+log_note() {
+    echo -e "${BLUE}[NOTE]${NC} $1"
 }
 
-log_step() {
-    echo -e "${BLUE}[STEP]${NC} $1"
+# 创建客户端配置目录
+mkdir -p ${CONFIG_DIR}
+
+# 读取服务端信息
+read_server_info() {
+    if [ -f "${SERVER_INFO_FILE}" ]; then
+        PASSWORD=$(grep '"password"' ${SERVER_INFO_FILE} | cut -d'"' -f4)
+        VLESS_UUID=$(grep -A 10 '"vless"' ${SERVER_INFO_FILE} | grep '"uuid"' | cut -d'"' -f4)
+        VMESS_UUID=$(grep -A 10 '"vmess"' ${SERVER_INFO_FILE} | grep '"uuid"' | cut -d'"' -f4)
+        TUIC_UUID=$(grep -A 10 '"tuic"' ${SERVER_INFO_FILE} | grep '"uuid"' | cut -d'"' -f4)
+        
+        log_info "从服务端配置读取到认证信息"
+    else
+        log_warn "服务端配置文件不存在，请手动设置认证信息"
+        PASSWORD="your_password_here"
+        VLESS_UUID="your_vless_uuid_here"
+        VMESS_UUID="your_vmess_uuid_here"
+        TUIC_UUID="your_tuic_uuid_here"
+    fi
 }
 
-log_success() {
-    echo -e "${PURPLE}[SUCCESS]${NC} $1"
-}
-
-# 显示标题
-show_banner() {
-    echo -e "${CYAN}"
+# 生成基础客户端配置模板
+create_base_config() {
     cat << 'EOF'
-╔══════════════════════════════════════════════════╗
-║              Sing-box 代理服务部署               ║
-║              一键自动化部署脚本                  ║
-╚══════════════════════════════════════════════════╝
+{
+	"log": {
+		"disabled": false,
+		"level": "warn",
+		"timestamp": true
+	},
+	"dns": {
+		"servers": [
+			{
+				"type": "h3",
+				"tag": "cloudflare",
+				"server": "1.1.1.1",
+				"detour": "select"
+			},
+			{
+				"type": "h3",
+				"tag": "google",
+				"server": "8.8.8.8",
+				"detour": "select"
+			},
+			{
+				"type": "quic",
+				"tag": "local",
+				"server": "223.5.5.5"
+			},
+			{
+				"type": "fakeip",
+				"tag": "fakeip",
+				"inet4_range": "198.18.0.0/15",
+				"inet6_range": "fc00::/18"
+			}
+		],
+		"rules": [
+			{
+				"type": "logical",
+				"mode": "and",
+				"rules": [
+					{
+						"rule_set": "geosite-geolocation-!cn",
+						"invert": true
+					},
+					{
+						"rule_set": "geoip-cn"
+					}
+				],
+				"server": "local"
+			},
+			{
+				"query_type": [
+					"A",
+					"AAAA"
+				],
+				"server": "fakeip"
+			}
+		],
+		"independent_cache": true
+	},
+	"inbounds": [
+		{
+			"type": "tun",
+			"tag": "tun-in",
+			"address": [
+				"172.18.0.1/30",
+				"fdfe:dcba:9876::1/126"
+			],
+			"mtu": 9000,
+			"auto_route": true,
+			"strict_route": true
+		}
+	],
+	"outbounds": [
+		{
+			"type": "selector",
+			"tag": "select",
+			"outbounds": [
+				"proxy-main",
+				"direct"
+			],
+			"interrupt_exist_connections": true
+		},
+		PROXY_CONFIG_PLACEHOLDER,
+		{
+			"type": "direct",
+			"tag": "direct"
+		}
+	],
+	"route": {
+		"rules": [
+			{
+				"action": "sniff"
+			},
+			{
+				"protocol": "dns",
+				"action": "hijack-dns"
+			},
+			{
+				"ip_is_private": true,
+				"outbound": "direct"
+			},
+			{
+				"domain_suffix": [
+					"u3.ucweb.com"
+				],
+				"action": "reject"
+			},
+			{
+				"rule_set": "geoip-cn",
+				"outbound": "direct"
+			},
+			{
+				"protocol": "quic",
+				"action": "reject"
+			}
+		],
+		"rule_set": [
+			{
+				"type": "remote",
+				"tag": "geosite-geolocation-cn",
+				"format": "binary",
+				"url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+			},
+			{
+				"type": "remote",
+				"tag": "geosite-geolocation-!cn",
+				"format": "binary",
+				"url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+			},
+			{
+				"type": "remote",
+				"tag": "geoip-cn",
+				"format": "binary",
+				"url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+			}
+		],
+		"auto_detect_interface": true,
+		"default_domain_resolver": "local"
+	},
+	"experimental": {
+		"cache_file": {
+			"enabled": true,
+			"store_fakeip": true,
+			"store_rdrc": true
+		},
+		"clash_api": {
+			"external_controller": "127.0.0.1:9090"
+		}
+	}
+}
 EOF
-    echo -e "${NC}"
 }
 
-# 检查系统环境
-check_environment() {
-    log_step "检查系统环境..."
+# 1. Hysteria2 客户端配置
+create_hysteria2_client() {
+    log_info "生成 Hysteria2 客户端配置..."
     
-    # 检查是否为root权限
-    if [[ $EUID -ne 0 ]]; then
-        log_error "此脚本需要root权限运行"
-        exit 1
-    fi
+    local proxy_config=$(cat << EOF
+		{
+			"type": "hysteria2",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 36712,
+			"password": "${PASSWORD}",
+			"tls": {
+				"enabled": true,
+				"server_name": "${DOMAIN}",
+				"insecure": false
+			}
+		}
+EOF
+)
     
-    # 检查操作系统
-    if [[ ! -f /etc/os-release ]]; then
-        log_error "无法识别的操作系统"
-        exit 1
-    fi
-    
-    source /etc/os-release
-    log_info "操作系统: $PRETTY_NAME"
-    
-    # 检查必要命令
-    local required_commands=("curl" "docker" "docker-compose")
-    for cmd in "${required_commands[@]}"; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            log_warn "$cmd 未安装，将自动安装"
-        fi
-    done
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/hysteria2_client.json
 }
 
-# 创建项目目录结构
-create_project_structure() {
-    log_step "创建项目目录结构..."
+# 2. VLESS 客户端配置
+create_vless_client() {
+    log_info "生成 VLESS 客户端配置..."
     
-    mkdir -p ${PROJECT_DIR}/{scripts,config,client_configs,logs,backup}
-    cd ${PROJECT_DIR}
+    local proxy_config=$(cat << EOF
+		{
+			"type": "vless",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 443,
+			"uuid": "${VLESS_UUID}",
+			"tls": {
+				"enabled": true,
+				"server_name": "${DOMAIN}",
+				"insecure": false
+			},
+			"transport": {
+				"type": "ws",
+				"path": "/vless",
+				"early_data_header_name": "Sec-WebSocket-Protocol"
+			}
+		}
+EOF
+)
     
-    log_info "项目目录: ${PROJECT_DIR}"
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/vless_client.json
 }
 
-# 复制脚本文件
-copy_scripts() {
-    log_step "复制部署脚本..."
+# 3. VMess 客户端配置
+create_vmess_client() {
+    log_info "生成 VMess 客户端配置..."
     
-    # 复制所有脚本到项目目录
-    cp ${SCRIPT_DIR}/*.sh ${PROJECT_DIR}/scripts/ 2>/dev/null || true
+    local proxy_config=$(cat << EOF
+		{
+			"type": "vmess",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 443,
+			"uuid": "${VMESS_UUID}",
+			"security": "auto",
+			"alter_id": 0,
+			"tls": {
+				"enabled": true,
+				"server_name": "${DOMAIN}",
+				"insecure": false
+			},
+			"transport": {
+				"type": "ws",
+				"path": "/vmess"
+			}
+		}
+EOF
+)
     
-    # 确保脚本可执行
-    chmod +x ${PROJECT_DIR}/scripts/*.sh
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/vmess_client.json
 }
 
-# 执行证书申请
-setup_certificates() {
-    log_step "申请SSL证书..."
+# 4. Shadowsocks 客户端配置
+create_shadowsocks_client() {
+    log_info "生成 Shadowsocks 客户端配置..."
     
-    # 检查证书申请脚本
-    local cert_script="${PROJECT_DIR}/scripts/cert_setup.sh"
-    if [[ ! -f "$cert_script" ]]; then
-        log_error "证书申请脚本不存在"
-        return 1
-    fi
+    local proxy_config=$(cat << EOF
+		{
+			"type": "shadowsocks",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 8388,
+			"method": "chacha20-ietf-poly1305",
+			"password": "${PASSWORD}",
+			"multiplex": {
+				"enabled": true,
+				"padding": true
+			}
+		}
+EOF
+)
     
-    # 执行证书申请
-    bash "$cert_script"
-    
-    # 验证证书
-    local cert_path="/opt/ssl/${DOMAIN}/fullchain.pem"
-    local key_path="/opt/ssl/${DOMAIN}/private.key"
-    
-    if [[ -f "$cert_path" ]] && [[ -f "$key_path" ]]; then
-        log_success "SSL证书申请成功"
-        return 0
-    else
-        log_error "SSL证书申请失败"
-        return 1
-    fi
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/shadowsocks_client.json
 }
 
-# 生成服务端配置
-setup_server_configs() {
-    log_step "生成服务端配置..."
+# 5. TUIC 客户端配置
+create_tuic_client() {
+    log_info "生成 TUIC 客户端配置..."
     
-    local server_script="${PROJECT_DIR}/scripts/generate_server_configs.sh"
-    if [[ ! -f "$server_script" ]]; then
-        log_error "服务端配置生成脚本不存在"
-        return 1
-    fi
+    local proxy_config=$(cat << EOF
+		{
+			"type": "tuic",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 443,
+			"uuid": "${TUIC_UUID}",
+			"password": "${PASSWORD}",
+			"tls": {
+				"enabled": true,
+				"server_name": "${DOMAIN}",
+				"insecure": false
+			},
+			"congestion_control": "bbr"
+		}
+EOF
+)
     
-    # 执行配置生成
-    cd ${PROJECT_DIR}
-    bash "$server_script"
-    
-    log_success "服务端配置生成完成"
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/tuic_client.json
 }
 
-# 生成客户端配置
-setup_client_configs() {
-    log_step "生成客户端配置..."
+# 6. Trojan 客户端配置
+create_trojan_client() {
+    log_info "生成 Trojan 客户端配置..."
     
-    local client_script="${PROJECT_DIR}/scripts/generate_client_configs.sh"
-    if [[ ! -f "$client_script" ]]; then
-        log_error "客户端配置生成脚本不存在"
-        return 1
-    fi
+    local proxy_config=$(cat << EOF
+		{
+			"type": "trojan",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 443,
+			"password": "${PASSWORD}",
+			"tls": {
+				"enabled": true,
+				"server_name": "${DOMAIN}",
+				"insecure": false
+			}
+		}
+EOF
+)
     
-    # 执行配置生成
-    cd ${PROJECT_DIR}
-    bash "$client_script"
-    
-    log_success "客户端配置生成完成"
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/trojan_client.json
 }
 
-# 选择并启动协议
-select_and_start_protocol() {
-    log_step "选择要启动的协议..."
+# 7. Naive 客户端配置
+create_naive_client() {
+    log_info "生成 Naive 客户端配置..."
     
-    # 列出可用配置
-    local configs=($(ls ${PROJECT_DIR}/config/*.json 2>/dev/null | xargs -n1 basename | grep -v config.json | grep -v server_info.json))
+    local proxy_config=$(cat << EOF
+		{
+			"type": "naive",
+			"tag": "proxy-main",
+			"server": "${DOMAIN}",
+			"server_port": 443,
+			"username": "user",
+			"password": "${PASSWORD}",
+			"tls": {
+				"enabled": true,
+				"server_name": "${DOMAIN}",
+				"insecure": false
+			}
+		}
+EOF
+)
     
-    if [[ ${#configs[@]} -eq 0 ]]; then
-        log_error "没有找到可用的配置文件"
-        return 1
-    fi
-    
-    echo "可用协议配置:"
-    for i in "${!configs[@]}"; do
-        local protocol=$(echo "${configs[$i]}" | cut -d'.' -f1)
-        echo "$((i+1)). $protocol"
-    done
-    
-    echo -n "请选择要启动的协议 (1-${#configs[@]}) [默认: 1]: "
-    read choice
-    
-    # 默认选择第一个
-    if [[ -z "$choice" ]]; then
-        choice=1
-    fi
-    
-    if [[ "$choice" -gt 0 ]] && [[ "$choice" -le "${#configs[@]}" ]]; then
-        local selected_config="${configs[$((choice-1))]}"
-        local protocol=$(echo "$selected_config" | cut -d'.' -f1)
-        
-        log_info "启动协议: $protocol"
-        cd ${PROJECT_DIR}
-        bash ./start_proxy.sh "$selected_config"
-        
-        log_success "协议 $protocol 启动成功"
-        return 0
-    else
-        log_error "无效选择"
-        return 1
-    fi
+    create_base_config | sed "s/PROXY_CONFIG_PLACEHOLDER/${proxy_config}/g" > ${CONFIG_DIR}/naive_client.json
 }
 
-# 创建管理脚本
-create_management_scripts() {
-    log_step "创建管理脚本..."
+# 生成客户端启动脚本
+create_client_start_script() {
+    log_info "生成客户端启动脚本..."
     
-    # 创建服务管理脚本
-    cat > ${PROJECT_DIR}/manage.sh << 'EOF'
+    cat > start_client.sh << 'EOF'
 #!/bin/bash
 
-# Sing-box 服务管理脚本
+# Sing-box 客户端启动脚本 (macOS)
 
-PROJECT_DIR="/opt/singbox-proxy"
-cd ${PROJECT_DIR}
+CONFIG_FILE="${1:-hysteria2_client.json}"
+CONFIG_DIR="./client_configs"
 
-case "${1:-}" in
-    "start")
-        echo "启动服务..."
-        docker-compose up -d
-        echo "服务已启动"
-        ;;
-    "stop")
-        echo "停止服务..."
-        docker-compose down
-        echo "服务已停止"
-        ;;
-    "restart")
-        echo "重启服务..."
-        docker-compose restart
-        echo "服务已重启"
-        ;;
-    "status")
-        echo "服务状态:"
-        docker-compose ps
-        ;;
-    "logs")
-        echo "查看日志:"
-        docker-compose logs -f --tail=100
-        ;;
-    "switch")
-        echo "切换协议配置:"
-        bash ./switch_config.sh
-        ;;
-    "update")
-        echo "更新 sing-box 镜像:"
-        docker-compose pull
-        docker-compose up -d
-        ;;
-    "backup")
-        echo "备份配置:"
-        tar -czf "backup/singbox-backup-$(date +%Y%m%d-%H%M%S).tar.gz" config/ client_configs/
-        echo "备份完成"
-        ;;
-    "clean")
-        echo "清理日志和缓存:"
-        docker system prune -f
-        rm -rf logs/*.log
-        echo "清理完成"
-        ;;
-    *)
-        echo "Sing-box 服务管理"
-        echo "用法: $0 {start|stop|restart|status|logs|switch|update|backup|clean}"
-        echo ""
-        echo "命令说明:"
-        echo "  start   - 启动服务"
-        echo "  stop    - 停止服务"
-        echo "  restart - 重启服务"
-        echo "  status  - 查看状态"
-        echo "  logs    - 查看日志"
-        echo "  switch  - 切换协议"
-        echo "  update  - 更新镜像"
-        echo "  backup  - 备份配置"
-        echo "  clean   - 清理缓存"
-        exit 1
-        ;;
-esac
+if [ ! -f "${CONFIG_DIR}/${CONFIG_FILE}" ]; then
+    echo "错误: 配置文件 ${CONFIG_DIR}/${CONFIG_FILE} 不存在"
+    echo "可用配置:"
+    ls ${CONFIG_DIR}/*_client.json 2>/dev/null | xargs -n1 basename
+    exit 1
+fi
+
+echo "启动 Sing-box 客户端，使用配置: ${CONFIG_FILE}"
+
+# 检查是否已有客户端运行
+if pgrep -f "sing-box.*run" > /dev/null; then
+    echo "检测到已运行的 sing-box 进程，正在停止..."
+    pkill -f "sing-box.*run"
+    sleep 2
+fi
+
+# 检查sing-box是否安装
+if ! command -v sing-box >/dev/null 2>&1; then
+    echo "错误: sing-box 未安装"
+    echo "请访问 https://github.com/SagerNet/sing-box/releases 下载安装"
+    echo "或使用 Homebrew: brew install sagernet/sing-box/sing-box"
+    exit 1
+fi
+
+# 检查权限（macOS TUN需要sudo）
+if [ "$EUID" -ne 0 ]; then
+    echo "macOS TUN模式需要管理员权限，请使用 sudo 运行"
+    echo "sudo ./start_client.sh ${CONFIG_FILE}"
+    exit 1
+fi
+
+# 启动客户端
+echo "启动 sing-box 客户端..."
+sing-box run -c "${CONFIG_DIR}/${CONFIG_FILE}" &
+
+CLIENT_PID=$!
+echo "客户端已启动，PID: ${CLIENT_PID}"
+echo "Clash API: http://127.0.0.1:9090"
+echo "按 Ctrl+C 停止客户端"
+
+# 等待信号
+trap "echo '正在停止客户端...'; kill ${CLIENT_PID}; exit" INT TERM
+
+wait ${CLIENT_PID}
 EOF
     
-    chmod +x ${PROJECT_DIR}/manage.sh
-    
-    # 创建系统服务
-    cat > /etc/systemd/system/singbox-proxy.service << EOF
-[Unit]
-Description=Sing-box Proxy Service
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=${PROJECT_DIR}
-ExecStart=/usr/bin/docker-compose up -d
-ExecStop=/usr/bin/docker-compose down
-TimeoutStartSec=0
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    systemctl daemon-reload
-    systemctl enable singbox-proxy.service
-    
-    log_success "管理脚本创建完成"
+    chmod +x start_client.sh
 }
 
-# 生成客户端连接信息
-generate_connection_info() {
-    log_step "生成客户端连接信息..."
+# 生成客户端切换脚本
+create_client_switch_script() {
+    log_info "生成客户端配置切换脚本..."
     
-    local info_file="${PROJECT_DIR}/connection_info.md"
+    cat > switch_client.sh << 'EOF'
+#!/bin/bash
+
+# 客户端配置切换脚本
+
+CONFIG_DIR="./client_configs"
+
+echo "可用客户端配置:"
+configs=($(ls ${CONFIG_DIR}/*_client.json 2>/dev/null | xargs -n1 basename))
+
+if [ ${#configs[@]} -eq 0 ]; then
+    echo "没有找到客户端配置文件"
+    exit 1
+fi
+
+for i in "${!configs[@]}"; do
+    protocol=$(echo "${configs[$i]}" | cut -d'_' -f1)
+    echo "$((i+1)). ${protocol} (${configs[$i]})"
+done
+
+echo -n "请选择配置 (1-${#configs[@]}): "
+read choice
+
+if [ "$choice" -gt 0 ] && [ "$choice" -le "${#configs[@]}" ]; then
+    selected_config="${configs[$((choice-1))]}"
+    protocol=$(echo "${selected_config}" | cut -d'_' -f1)
+    echo "切换到协议: ${protocol}"
+    echo "配置文件: ${selected_config}"
+    echo ""
+    echo "启动命令: sudo ./start_client.sh ${selected_config}"
+    echo ""
+    echo -n "是否立即启动? (y/N): "
+    read start_now
     
-    cat > "$info_file" << EOF
-# Sing-box 客户端连接信息
-
-## 服务器信息
-- **域名**: ${DOMAIN}
-- **服务器IP**: $(curl -s http://checkip.amazonaws.com/ || echo "获取失败")
-- **部署时间**: $(date)
-
-## 可用协议配置
-
-### 客户端文件下载
-客户端配置文件位于: \`${PROJECT_DIR}/client_configs/\`
-
-### 连接方式
-
-#### 方法一：使用配置文件
-1. 下载对应协议的客户端配置文件
-2. 使用 sing-box 客户端导入配置
-3. 启动连接
-
-#### 方法二：手动配置
-根据以下信息手动配置客户端:
-
-EOF
-    
-    # 读取认证信息
-    if [[ -f "${PROJECT_DIR}/config/server_info.json" ]]; then
-        local password=$(grep '"password"' ${PROJECT_DIR}/config/server_info.json | cut -d'"' -f4)
-        local vless_uuid=$(grep -A 10 '"vless"' ${PROJECT_DIR}/config/server_info.json | grep '"uuid"' | cut -d'"' -f4)
-        local vmess_uuid=$(grep -A 10 '"vmess"' ${PROJECT_DIR}/config/server_info.json | grep '"uuid"' | cut -d'"' -f4)
-        local tuic_uuid=$(grep -A 10 '"tuic"' ${PROJECT_DIR}/config/server_info.json | grep '"uuid"' | cut -d'"' -f4)
-        
-        cat >> "$info_file" << EOF
-
-**通用密码**: \`${password}\`
-
-**Hysteria2**
-- 端口: 36712
-- 密码: \`${password}\`
-
-**VLESS**
-- 端口: 443
-- UUID: \`${vless_uuid}\`
-- 传输: WebSocket
-- 路径: /vless
-
-**VMess** 
-- 端口: 443
-- UUID: \`${vmess_uuid}\`
-- 传输: WebSocket
-- 路径: /vmess
-
-**Shadowsocks**
-- 端口: 8388
-- 密码: \`${password}\`
-- 加密: chacha20-ietf-poly1305
-
-**TUIC**
-- 端口: 443
-- UUID: \`${tuic_uuid}\`
-- 密码: \`${password}\`
-
-**Trojan**
-- 端口: 443
-- 密码: \`${password}\`
-
-**Naive**
-- 端口: 443
-- 用户名: user
-- 密码: \`${password}\`
-
-## 客户端下载
-
-### Sing-box 官方客户端
-- [GitHub Releases](https://github.com/SagerNet/sing-box/releases)
-- [图形界面客户端](https://sing-box.sagernet.org/clients/)
-
-### 第三方客户端
-- **Android**: [SFA](https://github.com/SagerNet/sing-box-for-android)
-- **iOS**: [Shadowrocket](https://apps.apple.com/app/shadowrocket/id932747118)
-- **Windows**: [v2rayN](https://github.com/2dust/v2rayN)
-- **macOS**: [ClashX Pro](https://github.com/yichengchen/clashX)
-
-## 使用建议
-
-### 协议选择
-- **Hysteria2**: 高速度，适合高带宽需求
-- **VLESS**: 平衡性能和兼容性
-- **Shadowsocks**: 简单稳定，兼容性好
-- **TUIC**: 基于QUIC，移动网络表现好
-
-### 网络优化
-- 优先选择支持UDP的协议（Hysteria2、TUIC）
-- 在网络不稳定时使用TCP协议（VLESS、VMess、Shadowsocks）
-- 根据实际测试结果选择最佳协议
-
-## 故障排除
-
-### 连接问题
-1. 检查服务器状态: \`sudo ${PROJECT_DIR}/manage.sh status\`
-2. 查看服务日志: \`sudo ${PROJECT_DIR}/manage.sh logs\`
-3. 测试端口连通性: \`telnet ${DOMAIN} 端口号\`
-
-### 性能问题
-1. 切换协议: \`sudo ${PROJECT_DIR}/manage.sh switch\`
-2. 重启服务: \`sudo ${PROJECT_DIR}/manage.sh restart\`
-3. 更新镜像: \`sudo ${PROJECT_DIR}/manage.sh update\`
-
----
-*此信息由自动化部署脚本生成*
-EOF
+    if [ "$start_now" = "y" ] || [ "$start_now" = "Y" ]; then
+        if [ "$EUID" -ne 0 ]; then
+            echo "需要管理员权限，请输入密码:"
+            sudo ./start_client.sh "${selected_config}"
+        else
+            ./start_client.sh "${selected_config}"
+        fi
     fi
+else
+    echo "无效选择"
+    exit 1
+fi
+EOF
     
-    log_success "连接信息生成完成: $info_file"
+    chmod +x switch_client.sh
 }
 
-# 显示部署结果
-show_deployment_result() {
-    log_step "部署完成！"
+# 生成连接测试脚本
+create_test_script() {
+    log_info "生成连接测试脚本..."
     
-    echo -e "${GREEN}"
-    cat << 'EOF'
-╔══════════════════════════════════════════════════╗
-║                  部署成功！                      ║
-╚══════════════════════════════════════════════════╝
-EOF
-    echo -e "${NC}"
+    cat > test_connection.sh << 'EOF'
+#!/bin/bash
+
+# 连接测试脚本
+
+echo "正在测试代理连接..."
+
+# 测试网站列表
+test_sites=(
+    "https://www.google.com"
+    "https://www.youtube.com"
+    "https://github.com"
+    "https://httpbin.org/ip"
+)
+
+# 检查是否有代理在运行
+if ! pgrep -f "sing-box.*run" > /dev/null; then
+    echo "错误: 没有检测到运行中的 sing-box 客户端"
+    echo "请先启动客户端: sudo ./start_client.sh <config>"
+    exit 1
+fi
+
+echo "检测到 sing-box 客户端正在运行"
+echo ""
+
+# 测试直连和代理连接
+echo "=== 连接测试 ==="
+
+for site in "${test_sites[@]}"; do
+    echo -n "测试 ${site} ... "
     
-    echo "项目目录: ${PROJECT_DIR}"
-    echo "管理命令: sudo ${PROJECT_DIR}/manage.sh"
-    echo "连接信息: cat ${PROJECT_DIR}/connection_info.md"
-    echo ""
-    echo "常用操作:"
-    echo "  查看状态: sudo ${PROJECT_DIR}/manage.sh status"
-    echo "  查看日志: sudo ${PROJECT_DIR}/manage.sh logs"
-    echo "  切换协议: sudo ${PROJECT_DIR}/manage.sh switch"
-    echo "  重启服务: sudo ${PROJECT_DIR}/manage.sh restart"
-    echo ""
-    echo "客户端配置文件位于: ${PROJECT_DIR}/client_configs/"
-    echo ""
+    # 使用系统代理测试
+    response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "${site}" 2>/dev/null)
     
-    # 显示当前运行状态
-    if docker-compose ps | grep -q "Up"; then
-        echo -e "${GREEN}✓ 服务正在运行${NC}"
+    if [ "$response" = "200" ]; then
+        echo "✓ 成功 (${response})"
     else
-        echo -e "${YELLOW}! 服务未启动，请运行: sudo ${PROJECT_DIR}/manage.sh start${NC}"
+        echo "✗ 失败 (${response})"
     fi
+done
+
+echo ""
+echo "=== IP 地址检查 ==="
+
+# 检查当前IP
+echo -n "当前 IP 地址: "
+current_ip=$(curl -s --connect-timeout 10 https://httpbin.org/ip 2>/dev/null | grep -o '"origin": "[^"]*' | cut -d'"' -f4)
+
+if [ -n "$current_ip" ]; then
+    echo "$current_ip"
+    
+    # 简单的地理位置检查
+    echo -n "IP 地理位置: "
+    location=$(curl -s --connect-timeout 10 "http://ip-api.com/json/${current_ip}" 2>/dev/null | grep -o '"country": "[^"]*' | cut -d'"' -f4)
+    
+    if [ -n "$location" ]; then
+        echo "$location"
+    else
+        echo "无法获取"
+    fi
+else
+    echo "无法获取 IP 地址"
+fi
+
+echo ""
+echo "=== Clash API 状态 ==="
+
+# 检查Clash API
+if curl -s http://127.0.0.1:9090/version >/dev/null 2>&1; then
+    echo "✓ Clash API 可用: http://127.0.0.1:9090"
+    echo "  可使用 Clash 控制面板进行管理"
+else
+    echo "✗ Clash API 不可用"
+fi
+
+echo ""
+echo "测试完成"
+EOF
+    
+    chmod +x test_connection.sh
+}
+
+# 生成安装指南
+create_install_guide() {
+    log_info "生成 macOS 安装指南..."
+    
+    cat > INSTALL_GUIDE.md << 'EOF'
+# Sing-box macOS 客户端安装指南
+
+## 1. 安装 Sing-box
+
+### 方法一：使用 Homebrew（推荐）
+```bash
+# 添加 tap
+brew tap sagernet/sing-box
+
+# 安装 sing-box
+brew install sing-box
+```
+
+### 方法二：手动下载
+1. 访问 [Sing-box Releases](https://github.com/SagerNet/sing-box/releases)
+2. 下载适合 macOS 的版本
+3. 解压并移动到 `/usr/local/bin/`
+
+## 2. 验证安装
+```bash
+sing-box version
+```
+
+## 3. 使用客户端
+
+### 启动客户端
+```bash
+# 选择配置启动
+sudo ./start_client.sh hysteria2_client.json
+
+# 或使用交互式选择
+./switch_client.sh
+```
+
+### 测试连接
+```bash
+./test_connection.sh
+```
+
+## 4. 重要说明
+
+### TUN 模式权限
+- macOS 的 TUN 模式需要管理员权限
+- 首次使用会弹出权限请求对话框
+- 建议允许 sing-box 的网络访问权限
+
+### 系统代理设置
+- TUN 模式会自动配置系统代理
+- 无需手动设置浏览器代理
+- 停止客户端后系统代理会自动恢复
+
+### 防火墙设置
+- 如遇到连接问题，检查 macOS 防火墙设置
+- 允许 sing-box 的入站连接
+
+## 5. 管理界面
+
+### Clash API
+- 地址: http://127.0.0.1:9090
+- 可使用第三方 Clash 控制面板
+- 推荐: [Clash Dashboard](https://clash.razord.top/)
+
+## 6. 故障排除
+
+### 常见问题
+1. **权限被拒绝**: 使用 `sudo` 运行启动脚本
+2. **端口占用**: 检查是否有其他代理软件运行
+3. **连接失败**: 检查服务端配置和网络连接
+
+### 日志查看
+```bash
+# 查看详细日志
+sudo sing-box run -c client_configs/config.json --log-level debug
+```
+
+### 重置配置
+```bash
+# 停止所有 sing-box 进程
+sudo pkill -f sing-box
+
+# 清理缓存
+rm -rf ~/.cache/sing-box
+```
+
+## 7. 配置文件说明
+
+- `hysteria2_client.json`: Hysteria2 协议
+- `vless_client.json`: VLESS + WebSocket + TLS
+- `vmess_client.json`: VMess + WebSocket + TLS  
+- `shadowsocks_client.json`: Shadowsocks
+- `tuic_client.json`: TUIC 协议
+- `trojan_client.json`: Trojan 协议
+- `naive_client.json`: Naive Proxy
+
+选择最适合您网络环境的协议配置。
+EOF
 }
 
 # 主函数
 main() {
-    show_banner
+    log_info "开始生成 Sing-box 客户端配置..."
     
-    log_info "开始自动化部署 Sing-box 代理服务"
-    log_info "域名: ${DOMAIN}"
+    # 读取服务端信息
+    read_server_info
     
-    # 确认开始部署
-    echo -n "确认开始部署? (y/N): "
-    read confirm
-    if [[ "$confirm" != "y" ]] && [[ "$confirm" != "Y" ]]; then
-        log_info "部署已取消"
-        exit 0
+    # 生成所有客户端配置
+    create_hysteria2_client
+    create_vless_client
+    create_vmess_client
+    create_shadowsocks_client
+    create_tuic_client
+    create_trojan_client
+    create_naive_client
+    
+    # 生成管理脚本
+    create_client_start_script
+    create_client_switch_script
+    create_test_script
+    create_install_guide
+    
+    log_info "所有客户端配置生成完成！"
+    echo ""
+    log_note "配置文件位置: ${CONFIG_DIR}/"
+    log_note "使用方法:"
+    echo "  1. 安装 sing-box: brew tap sagernet/sing-box && brew install sing-box"
+    echo "  2. 启动客户端: sudo ./start_client.sh hysteria2_client.json"
+    echo "  3. 交互选择: ./switch_client.sh" 
+    echo "  4. 测试连接: ./test_connection.sh"
+    echo "  5. 查看指南: cat INSTALL_GUIDE.md"
+    echo ""
+    log_note "认证信息:"
+    echo "  域名: ${DOMAIN}"
+    echo "  密码: ${PASSWORD}"
+    if [ "${VLESS_UUID}" != "your_vless_uuid_here" ]; then
+        echo "  VLESS UUID: ${VLESS_UUID}"
     fi
-    
-    # 执行部署步骤
-    check_environment
-    create_project_structure
-    copy_scripts
-    
-    # 证书申请
-    if setup_certificates; then
-        log_success "证书配置完成"
-    else
-        log_error "证书配置失败，请检查域名解析"
-        exit 1
+    if [ "${VMESS_UUID}" != "your_vmess_uuid_here" ]; then
+        echo "  VMess UUID: ${VMESS_UUID}"
     fi
-    
-    # 配置生成
-    setup_server_configs
-    setup_client_configs
-    
-    # 选择并启动协议
-    select_and_start_protocol
-    
-    # 创建管理工具
-    create_management_scripts
-    generate_connection_info
-    
-    # 显示结果
-    show_deployment_result
-    
-    log_success "自动化部署完成！"
+    if [ "${TUIC_UUID}" != "your_tuic_uuid_here" ]; then
+        echo "  TUIC UUID: ${TUIC_UUID}"
+    fi
 }
 
-# 脚本参数处理
-case "${1:-}" in
-    "")
-        main
-        ;;
-    "uninstall")
-        log_info "卸载 Sing-box 代理服务..."
-        systemctl stop singbox-proxy 2>/dev/null || true
-        systemctl disable singbox-proxy 2>/dev/null || true
-        docker-compose -f ${PROJECT_DIR}/docker-compose.yml down 2>/dev/null || true
-        rm -rf ${PROJECT_DIR}
-        rm -f /etc/systemd/system/singbox-proxy.service
-        systemctl daemon-reload
-        log_success "卸载完成"
-        ;;
-    "update")
-        log_info "更新部署脚本..."
-        cd ${PROJECT_DIR}
-        git pull 2>/dev/null || log_warn "无法自动更新，请手动更新脚本"
-        ;;
-    "status")
-        if [[ -d "${PROJECT_DIR}" ]]; then
-            cd ${PROJECT_DIR}
-            bash ./manage.sh status
-        else
-            log_error "服务未安装"
-        fi
-        ;;
-    *)
-        echo "用法: $0 [uninstall|update|status]"
-        echo ""
-        echo "  无参数  - 执行完整部署"
-        echo "  uninstall - 卸载服务"
-        echo "  update    - 更新脚本"
-        echo "  status    - 查看状态"
-        exit 1
-        ;;
-esac
+# 执行主函数
+main
