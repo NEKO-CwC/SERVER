@@ -3,7 +3,7 @@
 # Sing-box 客户端配置生成器 (macOS)
 # 根据服务端配置生成对应的客户端配置
 
-set -e
+
 
 DOMAIN="284072.xyz"
 CONFIG_DIR="./client_configs"

@@ -3,7 +3,7 @@
 # Sing-box 代理服务一键部署脚本
 # 自动完成证书申请、服务端配置、客户端配置生成
 
-set -e
+
 
 DOMAIN="284072.xyz"
 PROJECT_DIR="/opt/singbox-proxy"

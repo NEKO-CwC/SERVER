@@ -3,7 +3,7 @@
 # 域名证书自动申请脚本
 # 使用 acme.sh 和 nginx docker 为 284072.xyz 申请证书
 
-set -e
+
 
 DOMAIN="284072.xyz"
 EMAIL="admin@${DOMAIN}"

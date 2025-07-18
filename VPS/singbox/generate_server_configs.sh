@@ -3,7 +3,7 @@
 # Sing-box 服务端配置生成器
 # 生成不同协议的服务端配置文件
 
-set -e
+
 
 DOMAIN="284072.xyz"
 CERT_PATH="/opt/ssl/${DOMAIN}/fullchain.pem"
