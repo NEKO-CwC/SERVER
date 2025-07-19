@@ -4,11 +4,27 @@
 # 使用 acme.sh 和 nginx docker 为 284072.xyz 申请证书
 
 
-
-DOMAIN="284072.xyz"
+# 从 flag 中获取域名
+DOMAIN=""
 EMAIL="admin@${DOMAIN}"
 CERT_DIR="/opt/ssl/${DOMAIN}"
 NGINX_WEBROOT="/opt/nginx/html"
+
+while getopts "d:h:" opt; do
+    case $opt in
+        d)
+            DOMAIN=$OPTARG
+            ;;
+        h)
+            echo "Usage: $0 -d <domain>"
+            return 0
+            ;;
+        *)
+            echo "Invalid option: -$OPTARG"
+            return 1
+            ;;
+    esac
+done
 
 # 颜色输出
 RED='\033[0;31m'
@@ -318,8 +334,23 @@ main() {
 
 # 脚本参数处理
 case "${1:-}" in
-    "")
-        main
+    "setup")
+        while getopts "d:h:" opt; do
+            case $opt in
+                d)
+                    DOMAIN=$OPTARG
+                    main
+                    ;;
+                h)
+                    echo "Usage: $0 setup -d <domain>"
+                    return 0
+                    ;;
+                *)
+                    echo "Invalid option: -$OPTARG"
+                    return 1
+                    ;;
+            esac
+        done
         ;;
     "renew")
         log_info "手动续期证书..."
