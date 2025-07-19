@@ -48,7 +48,7 @@ log_error() {
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_error "此脚本需要root权限运行"
-        exit 1
+        return 1
     fi
 }
 
@@ -67,7 +67,7 @@ install_dependencies() {
         systemctl start crond
     else
         log_error "不支持的操作系统"
-        exit 1
+        return 1
     fi
     
     # 启动docker服务
@@ -328,7 +328,7 @@ main() {
         log_info "网站已可通过 https://${DOMAIN} 访问"
     else
         log_error "证书验证失败，请检查配置"
-        exit 1
+        return 1
     fi
 }
 
@@ -370,6 +370,6 @@ case "${1:-}" in
         echo "  renew: 手动续期证书"
         echo "  status: 检查证书状态"
         echo "  clean: 清理nginx容器"
-        exit 1
+        return 1
         ;;
 esac
