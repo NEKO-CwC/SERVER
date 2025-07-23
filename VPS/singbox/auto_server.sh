@@ -309,7 +309,7 @@ create_management_scripts() {
 
 CONFIG_FILE="${1:-hysteria2.json}"
 CONFIG_DIR="./config"
-PROJECT_DIR="/opt/singbox-proxy"
+PROJECT_DIR="/root/singbox-proxy"
 
 cd ${PROJECT_DIR}
 
@@ -350,7 +350,7 @@ EOF
     cat > ${PROJECT_DIR}/manage_server.sh << 'EOF'
 #!/bin/bash
 
-PROJECT_DIR="/opt/singbox-proxy"
+PROJECT_DIR="/root/singbox-proxy"
 cd ${PROJECT_DIR}
 
 case "${1:-}" in

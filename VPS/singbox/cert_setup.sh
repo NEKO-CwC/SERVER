@@ -10,21 +10,6 @@ EMAIL="admin@${DOMAIN}"
 CERT_DIR="/opt/ssl/${DOMAIN}"
 NGINX_WEBROOT="/opt/nginx/html"
 
-while getopts "d:h:" opt; do
-    case $opt in
-        d)
-            DOMAIN=$OPTARG
-            ;;
-        h)
-            echo "Usage: $0 -d <domain>"
-            return 0
-            ;;
-        *)
-            echo "Invalid option: -$OPTARG"
-            return 1
-            ;;
-    esac
-done
 
 # 颜色输出
 RED='\033[0;31m'
@@ -338,7 +323,7 @@ case "${1:-}" in
         while getopts "d:h:" opt; do
             case $opt in
                 d)
-                    DOMAIN=$OPTARG
+                    DOMAIN="${OPTARG}"
                     main
                     ;;
                 h)
@@ -346,7 +331,7 @@ case "${1:-}" in
                     return 0
                     ;;
                 *)
-                    echo "Invalid option: -$OPTARG"
+                    echo "Invalid option: -${OPTARG}"
                     return 1
                     ;;
             esac

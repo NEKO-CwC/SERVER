@@ -1,0 +1,174 @@
+{
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "local",
+        "address": "https://223.5.5.5/dns-query",
+        "strategy": "ipv4_only",
+        "detour": "direct"
+      },
+      {
+        "tag": "cloudflare",
+        "address": "1.1.1.1",
+        "strategy": "ipv4_only",
+        "detour": "proxy"
+      }
+    ],
+    "rules": [
+      {
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "rule_set": ["karing-ruleset-full-gfw"],
+            "invert": true
+          },
+          {
+            "rule_set": ["karing-ruleset-cnip", "karing-ruleset-cn-company", "karing-ruleset-geolocation-cn"]
+          }
+        ],
+        "server": "local"
+      },
+      {
+        "query_type": [
+          "A"
+        ],
+        "server": "cloudflare"
+      }
+    ],
+    "independent_cache": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun9",
+      "address": [
+        "172.18.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "mtu": 9000,
+      "auto_route": true,
+      "strict_route": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": [
+        "proxy"
+      ],
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "hysteria2",
+      "tag": "proxy",
+      "server": "284072.xyz",
+      "server_port": 36712,
+      "password": "nekosaiko",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "284072.xyz"
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "timeout": "100ms"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "domain_suffix": [
+          "u3.ucweb.com"
+        ],
+        "action": "reject"
+      },
+      {
+        "rule_set": ["karing-ruleset-cnip", "karing-ruleset-cn-company", "karing-ruleset-geolocation-cn"],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["karing-ruleset-telegram", "karing-ruleset-proxy-common", "karing-ruleset-full-gfw"],
+        "outbound": "select"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-cnip",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ChinaIp.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-cn-company",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ChinaCompanyIp.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-telegram",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/Telegram.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-proxy-common",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ProxyLite.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-local",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/LocalAreaNetwork.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-full-gfw",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ProxyGFWlist.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-geolocation-cn",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/geo/geosite/geolocation-cn.srs",
+        "download_detour": "proxy"
+      }
+    ],
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_fakeip": true,
+      "store_rdrc": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090"
+    }
+  }
+}

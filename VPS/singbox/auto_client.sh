@@ -1,40 +1,16 @@
 #!/bin/bash
 
-# Sing-box 客户端部署脚本 (Linux/macOS)
-# 所有文件和配置都在当前目录下，不修改系统文件
+# Sing-box 客户端一键部署脚本
+# 支持 macOS 和 Linux 系统
+# 专用于客户端部署，包含配置生成、服务启动、协议切换
 
-# set -e
+# 服务器配置信息
+SERVER_DOMAIN="284072.xyz"
+SERVER_PASSWORD="PXFZLFsaa338x99I+2lplolbLPef17A0"
 
-DOMAIN="284072.xyz"
+# 项目配置
+PROJECT_DIR="./singbox-client"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="${SCRIPT_DIR}/singbox_client"
-BIN_DIR="${CLIENT_DIR}/bin"
-CONFIG_DIR="${CLIENT_DIR}/configs"
-LOG_DIR="${CLIENT_DIR}/logs"
-CACHE_DIR="${CLIENT_DIR}/cache"
-
-# 检测操作系统
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    OS="macos"
-    ARCH=$(uname -m)
-    case $ARCH in
-        "x86_64") ARCH="amd64" ;;
-        "arm64") ARCH="arm64" ;;
-        *) ARCH="amd64" ;;
-    esac
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS="linux"
-    ARCH=$(uname -m)
-    case $ARCH in
-        "x86_64") ARCH="amd64" ;;
-        "aarch64") ARCH="arm64" ;;
-        "armv7l") ARCH="armv7" ;;
-        *) ARCH="amd64" ;;
-    esac
-else
-    echo "不支持的操作系统: $OSTYPE"
-    
-fi
 
 # 颜色输出
 RED='\033[0;31m'
@@ -56,84 +32,173 @@ show_banner() {
     cat << 'EOF'
 ╔══════════════════════════════════════════════════╗
 ║           Sing-box 客户端自动部署                ║
-║        支持 macOS/Linux 跨平台部署               ║
+║     支持多协议代理客户端一键安装配置             ║
 ╚══════════════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
 }
 
-create_directory_structure() {
-    log_step "创建目录结构..."
+detect_os() {
+    log_step "检测操作系统..."
     
-    mkdir -p ${BIN_DIR}
-    mkdir -p ${CONFIG_DIR}
-    mkdir -p ${LOG_DIR}
-    mkdir -p ${CACHE_DIR}
-    mkdir -p ${CLIENT_DIR}/scripts
-    mkdir -p ${CLIENT_DIR}/test
-    
-    log_info "客户端目录: ${CLIENT_DIR}"
-}
-
-download_singbox() {
-    log_step "下载 Sing-box 客户端..."
-    
-    local download_url="https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-${OS}-${ARCH}.tar.gz"
-    local temp_file="${CLIENT_DIR}/sing-box.tar.gz"
-    
-    log_info "下载地址: ${download_url}"
-    
-    if command -v curl >/dev/null 2>&1; then
-        curl -L -o "${temp_file}" "${download_url}"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O "${temp_file}" "${download_url}"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        OS="macos"
+        log_info "检测到 macOS 系统"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        OS="linux"
+        log_info "检测到 Linux 系统"
     else
-        log_error "需要 curl 或 wget 来下载文件"
-        
+        log_error "不支持的操作系统: $OSTYPE"
+        return 1
     fi
     
-    # 解压
-    cd ${CLIENT_DIR}
-    tar -xzf sing-box.tar.gz
+    # 检查架构
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        armv7l) ARCH="armv7" ;;
+        *) log_warn "可能不支持的架构: $ARCH" ;;
+    esac
     
-    # 查找可执行文件
-    local binary=$(find . -name "sing-box" -type f -executable | head -1)
-    if [[ -n "$binary" ]]; then
-        mv "$binary" ${BIN_DIR}/sing-box
-        chmod +x ${BIN_DIR}/sing-box
-        rm -rf sing-box-${OS}-${ARCH}* sing-box.tar.gz
-        log_success "Sing-box 下载完成"
+    log_info "系统架构: $ARCH"
+}
+
+check_root_privileges() {
+    log_step "检查系统权限..."
+    
+    if [[ $EUID -eq 0 ]]; then
+        log_warn "检测到 root 权限，将自动处理权限相关操作"
+        SUDO_CMD=""
     else
-        log_error "未找到 sing-box 可执行文件"
-        
+        # 检查是否可以使用 sudo
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO_CMD="sudo"
+            log_info "将使用 sudo 执行特权操作"
+        else
+            log_error "需要 sudo 权限进行系统级安装，请安装 sudo 或使用 root 用户运行"
+            return 1
+        fi
     fi
 }
 
-generate_client_configs() {
-    log_step "生成客户端配置文件..."
+install_dependencies() {
+    log_step "安装必要依赖..."
     
-    # 从服务端信息读取配置（如果存在）
-    local PASSWORD="your_password_here"
-    local VLESS_UUID="your_vless_uuid_here"
-    local VMESS_UUID="your_vmess_uuid_here"
-    local TUIC_UUID="your_tuic_uuid_here"
-    
-    if [[ -f "server_info.json" ]]; then
-        PASSWORD=$(grep '"password"' server_info.json | cut -d'"' -f4 2>/dev/null || echo "$PASSWORD")
-        VLESS_UUID=$(grep -A 10 '"vless"' server_info.json | grep '"uuid"' | cut -d'"' -f4 2>/dev/null || echo "$VLESS_UUID")
-        VMESS_UUID=$(grep -A 10 '"vmess"' server_info.json | grep '"uuid"' | cut -d'"' -f4 2>/dev/null || echo "$VMESS_UUID")
-        TUIC_UUID=$(grep -A 10 '"tuic"' server_info.json | grep '"uuid"' | cut -d'"' -f4 2>/dev/null || echo "$TUIC_UUID")
-        log_info "从 server_info.json 读取服务器配置"
+    # 检查并安装 Docker
+    if ! command -v docker >/dev/null 2>&1; then
+        log_info "安装 Docker..."
+        
+        if [[ "$OS" == "macos" ]]; then
+            # macOS 使用 Homebrew 安装 Docker
+            if ! command -v brew >/dev/null 2>&1; then
+                log_info "安装 Homebrew..."
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            fi
+            brew install --cask docker
+        elif [[ "$OS" == "linux" ]]; then
+            # Linux 安装 Docker
+            if command -v apt-get >/dev/null 2>&1; then
+                $SUDO_CMD apt-get update
+                $SUDO_CMD apt-get install -y ca-certificates curl gnupg lsb-release
+                $SUDO_CMD mkdir -p /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $SUDO_CMD gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | $SUDO_CMD tee /etc/apt/sources.list.d/docker.list > /dev/null
+                $SUDO_CMD apt-get update
+                $SUDO_CMD apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            elif command -v yum >/dev/null 2>&1; then
+                $SUDO_CMD yum install -y yum-utils
+                $SUDO_CMD yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+                $SUDO_CMD yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            elif command -v dnf >/dev/null 2>&1; then
+                $SUDO_CMD dnf install -y dnf-plugins-core
+                $SUDO_CMD dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+                $SUDO_CMD dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            else
+                log_error "不支持的 Linux 发行版"
+                return 1
+            fi
+            
+            # 启动 Docker 服务
+            $SUDO_CMD systemctl enable docker
+            $SUDO_CMD systemctl start docker
+            
+            # 添加当前用户到 docker 组
+            if [[ -n "$SUDO_CMD" ]]; then
+                $SUDO_CMD usermod -aG docker $USER
+                log_warn "用户已添加到 docker 组，请重新登录或运行 'newgrp docker'"
+            fi
+        fi
+    else
+        log_info "Docker 已安装"
     fi
     
-    # 创建基础配置模板
-    local base_config='
+    # 检查并安装 Docker Compose
+    if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+        log_info "安装 Docker Compose..."
+        
+        if [[ "$OS" == "macos" ]]; then
+            brew install docker-compose
+        elif [[ "$OS" == "linux" ]]; then
+            COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d'"' -f4)
+            $SUDO_CMD curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            $SUDO_CMD chmod +x /usr/local/bin/docker-compose
+        fi
+    else
+        log_info "Docker Compose 已安装"
+    fi
+    
+    # 安装其他必要工具
+    local tools=("curl" "jq")
+    for tool in "${tools[@]}"; do
+        if ! command -v $tool >/dev/null 2>&1; then
+            log_info "安装 $tool..."
+            
+            if [[ "$OS" == "macos" ]]; then
+                brew install $tool
+            elif [[ "$OS" == "linux" ]]; then
+                if command -v apt-get >/dev/null 2>&1; then
+                    $SUDO_CMD apt-get install -y $tool
+                elif command -v yum >/dev/null 2>&1; then
+                    $SUDO_CMD yum install -y $tool
+                elif command -v dnf >/dev/null 2>&1; then
+                    $SUDO_CMD dnf install -y $tool
+                fi
+            fi
+        fi
+    done
+    
+    # 验证安装
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "Docker 安装失败"
+        return 1
+    fi
+    
+    if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+        log_error "Docker Compose 安装失败"
+        return 1
+    fi
+    
+    log_success "依赖安装完成"
+}
+
+setup_project_structure() {
+    log_step "创建项目目录结构..."
+    
+    mkdir -p ${PROJECT_DIR}/{config,logs,scripts}
+    cd ${PROJECT_DIR}
+    
+    log_info "项目目录: $(pwd)"
+}
+
+generate_base_config_template() {
+    # 生成基础配置模板
+    cat > ./config/base_template.json << 'EOF'
 {
     "log": {
         "disabled": false,
-        "level": "info",
-        "timestamp": true,
-        "output": "'${LOG_DIR}'/singbox.log"
+        "level": "warn",
+        "timestamp": true
     },
     "dns": {
         "servers": [
@@ -144,7 +209,7 @@ generate_client_configs() {
                 "detour": "select"
             },
             {
-                "type": "h3", 
+                "type": "h3",
                 "tag": "google",
                 "server": "8.8.8.8",
                 "detour": "select"
@@ -153,28 +218,50 @@ generate_client_configs() {
                 "type": "quic",
                 "tag": "local",
                 "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
             }
         ],
         "rules": [
             {
-                "rule_set": "geoip-cn",
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
                 "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
             }
         ],
         "independent_cache": true
     },
     "inbounds": [
         {
-            "type": "mixed",
-            "tag": "mixed-in",
-            "listen": "127.0.0.1",
-            "listen_port": 1080
-        },
-        {
-            "type": "http",
-            "tag": "http-in", 
-            "listen": "127.0.0.1",
-            "listen_port": 1081
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
         }
     ],
     "outbounds": [
@@ -182,12 +269,11 @@ generate_client_configs() {
             "type": "selector",
             "tag": "select",
             "outbounds": [
-                "proxy-main",
-                "direct"
+                "proxy"
             ],
             "interrupt_exist_connections": true
         },
-        PROXY_CONFIG_PLACEHOLDER,
+        "__PROXY_CONFIG__",
         {
             "type": "direct",
             "tag": "direct"
@@ -196,862 +282,1455 @@ generate_client_configs() {
     "route": {
         "rules": [
             {
+                "action": "sniff"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
                 "ip_is_private": true,
                 "outbound": "direct"
             },
             {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
                 "rule_set": "geoip-cn",
                 "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
             }
         ],
         "rule_set": [
             {
                 "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
                 "tag": "geoip-cn",
                 "format": "binary",
-                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-                "download_detour": "select"
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
             }
         ],
-        "auto_detect_interface": true
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
     },
     "experimental": {
         "cache_file": {
             "enabled": true,
-            "path": "'${CACHE_DIR}'/cache.db",
-            "store_fakeip": true
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
         }
     }
-}'
+}
+EOF
+}
+
+generate_client_configs() {
+    log_step "生成客户端配置文件..."
     
-    # 1. Hysteria2 客户端配置
-    local hysteria2_proxy='
+    generate_base_config_template
+    
+    # 1. Hysteria2 配置
+    cat > ./config/hysteria2.json << EOF
+{
+    "log": {
+        "disabled": false,
+        "level": "warn",
+        "timestamp": true
+    },
+    "dns": {
+        "servers": [
+            {
+                "type": "h3",
+                "tag": "cloudflare",
+                "server": "1.1.1.1",
+                "detour": "select"
+            },
+            {
+                "type": "h3",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "select"
+            },
+            {
+                "type": "quic",
+                "tag": "local",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }
+        ],
+        "rules": [
+            {
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
+                "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
+            }
+        ],
+        "independent_cache": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "selector",
+            "tag": "select",
+            "outbounds": [
+                "proxy"
+            ],
+            "interrupt_exist_connections": true
+        },
         {
             "type": "hysteria2",
-            "tag": "proxy-main",
-            "server": "'${DOMAIN}'",
+            "tag": "proxy",
+            "server": "${SERVER_DOMAIN}",
             "server_port": 36712,
-            "password": "'${PASSWORD}'",
+            "up_mbps": 1000,
+            "down_mbps": 1000,
+            "password": "${SERVER_PASSWORD}",
             "tls": {
                 "enabled": true,
-                "server_name": "'${DOMAIN}'",
-                "insecure": false
+                "server_name": "${SERVER_DOMAIN}"
             }
-        }'
-    
-    echo "$base_config" | sed "s|PROXY_CONFIG_PLACEHOLDER|${hysteria2_proxy}|g" > ${CONFIG_DIR}/hysteria2.json
-    
-    # 2. VLESS 客户端配置
-    local vless_proxy='
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
+        }
+    }
+}
+EOF
+
+    # 2. VLESS 配置
+    cat > ./config/vless.json << EOF
+{
+    "log": {
+        "disabled": false,
+        "level": "warn",
+        "timestamp": true
+    },
+    "dns": {
+        "servers": [
+            {
+                "type": "h3",
+                "tag": "cloudflare",
+                "server": "1.1.1.1",
+                "detour": "select"
+            },
+            {
+                "type": "h3",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "select"
+            },
+            {
+                "type": "quic",
+                "tag": "local",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }
+        ],
+        "rules": [
+            {
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
+                "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
+            }
+        ],
+        "independent_cache": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "selector",
+            "tag": "select",
+            "outbounds": [
+                "proxy"
+            ],
+            "interrupt_exist_connections": true
+        },
         {
             "type": "vless",
-            "tag": "proxy-main",
-            "server": "'${DOMAIN}'",
+            "tag": "proxy",
+            "server": "${SERVER_DOMAIN}",
             "server_port": 8443,
-            "uuid": "'${VLESS_UUID}'",
+            "uuid": "3025aff0-c888-05cd-d826-b55ef6d0e234",
             "tls": {
                 "enabled": true,
-                "server_name": "'${DOMAIN}'",
-                "insecure": false
+                "server_name": "${SERVER_DOMAIN}"
             },
             "transport": {
                 "type": "ws",
                 "path": "/vless",
                 "early_data_header_name": "Sec-WebSocket-Protocol"
             }
-        }'
-    
-    echo "$base_config" | sed "s|PROXY_CONFIG_PLACEHOLDER|${vless_proxy}|g" > ${CONFIG_DIR}/vless.json
-    
-    # 3. VMess 客户端配置
-    local vmess_proxy='
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
+        }
+    }
+}
+EOF
+
+    # 3. VMess 配置
+    cat > ./config/vmess.json << EOF
+{
+    "log": {
+        "disabled": false,
+        "level": "warn",
+        "timestamp": true
+    },
+    "dns": {
+        "servers": [
+            {
+                "type": "h3",
+                "tag": "cloudflare",
+                "server": "1.1.1.1",
+                "detour": "select"
+            },
+            {
+                "type": "h3",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "select"
+            },
+            {
+                "type": "quic",
+                "tag": "local",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }
+        ],
+        "rules": [
+            {
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
+                "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
+            }
+        ],
+        "independent_cache": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "selector",
+            "tag": "select",
+            "outbounds": [
+                "proxy"
+            ],
+            "interrupt_exist_connections": true
+        },
         {
             "type": "vmess",
-            "tag": "proxy-main",
-            "server": "'${DOMAIN}'",
+            "tag": "proxy",
+            "server": "${SERVER_DOMAIN}",
             "server_port": 8444,
-            "uuid": "'${VMESS_UUID}'",
+            "uuid": "2c938318-238e-9c58-8b2a-e5f603fd0631",
             "security": "auto",
             "alter_id": 0,
             "tls": {
                 "enabled": true,
-                "server_name": "'${DOMAIN}'",
-                "insecure": false
+                "server_name": "${SERVER_DOMAIN}"
             },
             "transport": {
                 "type": "ws",
                 "path": "/vmess"
             }
-        }'
-    
-    echo "$base_config" | sed "s|PROXY_CONFIG_PLACEHOLDER|${vmess_proxy}|g" > ${CONFIG_DIR}/vmess.json
-    
-    # 4. Shadowsocks 客户端配置
-    local shadowsocks_proxy='
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
+        }
+    }
+}
+EOF
+
+    # 4. Shadowsocks 配置
+    cat > ./config/shadowsocks.json << EOF
+{
+    "log": {
+        "disabled": false,
+        "level": "warn",
+        "timestamp": true
+    },
+    "dns": {
+        "servers": [
+            {
+                "type": "h3",
+                "tag": "cloudflare",
+                "server": "1.1.1.1",
+                "detour": "select"
+            },
+            {
+                "type": "h3",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "select"
+            },
+            {
+                "type": "quic",
+                "tag": "local",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }
+        ],
+        "rules": [
+            {
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
+                "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
+            }
+        ],
+        "independent_cache": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "selector",
+            "tag": "select",
+            "outbounds": [
+                "proxy"
+            ],
+            "interrupt_exist_connections": true
+        },
         {
             "type": "shadowsocks",
-            "tag": "proxy-main",
-            "server": "'${DOMAIN}'",
+            "tag": "proxy",
+            "server": "${SERVER_DOMAIN}",
             "server_port": 8388,
             "method": "chacha20-ietf-poly1305",
-            "password": "'${PASSWORD}'",
+            "password": "${SERVER_PASSWORD}",
             "multiplex": {
                 "enabled": true,
                 "padding": true
             }
-        }'
-    
-    echo "$base_config" | sed "s|PROXY_CONFIG_PLACEHOLDER|${shadowsocks_proxy}|g" > ${CONFIG_DIR}/shadowsocks.json
-    
-    # 5. TUIC 客户端配置
-    local tuic_proxy='
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
+        }
+    }
+}
+EOF
+
+    # 5. TUIC 配置
+    cat > ./config/tuic.json << EOF
+{
+    "log": {
+        "disabled": false,
+        "level": "warn",
+        "timestamp": true
+    },
+    "dns": {
+        "servers": [
+            {
+                "type": "h3",
+                "tag": "cloudflare",
+                "server": "1.1.1.1",
+                "detour": "select"
+            },
+            {
+                "type": "h3",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "select"
+            },
+            {
+                "type": "quic",
+                "tag": "local",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }
+        ],
+        "rules": [
+            {
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
+                "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
+            }
+        ],
+        "independent_cache": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "selector",
+            "tag": "select",
+            "outbounds": [
+                "proxy"
+            ],
+            "interrupt_exist_connections": true
+        },
         {
             "type": "tuic",
-            "tag": "proxy-main",
-            "server": "'${DOMAIN}'",
+            "tag": "proxy",
+            "server": "${SERVER_DOMAIN}",
             "server_port": 8445,
-            "uuid": "'${TUIC_UUID}'",
-            "password": "'${PASSWORD}'",
+            "uuid": "b225a557-4547-2d15-3a27-0940072b24c3",
+            "password": "${SERVER_PASSWORD}",
+            "congestion_control": "bbr",
             "tls": {
                 "enabled": true,
-                "server_name": "'${DOMAIN}'",
-                "insecure": false
+                "server_name": "${SERVER_DOMAIN}"
+            }
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
             },
-            "congestion_control": "bbr"
-        }'
-    
-    echo "$base_config" | sed "s|PROXY_CONFIG_PLACEHOLDER|${tuic_proxy}|g" > ${CONFIG_DIR}/tuic.json
-    
-    # 6. Trojan 客户端配置
-    local trojan_proxy='
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
+        }
+    }
+}
+EOF
+
+    # 6. Trojan 配置
+    cat > ./config/trojan.json << EOF
+{
+    "log": {
+        "disabled": false,
+        "level": "warn",
+        "timestamp": true
+    },
+    "dns": {
+        "servers": [
+            {
+                "type": "h3",
+                "tag": "cloudflare",
+                "server": "1.1.1.1",
+                "detour": "select"
+            },
+            {
+                "type": "h3",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "select"
+            },
+            {
+                "type": "quic",
+                "tag": "local",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }
+        ],
+        "rules": [
+            {
+                "type": "logical",
+                "mode": "and",
+                "rules": [
+                    {
+                        "rule_set": "geosite-geolocation-!cn",
+                        "invert": true
+                    },
+                    {
+                        "rule_set": "geoip-cn"
+                    }
+                ],
+                "server": "local"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "server": "fakeip"
+            }
+        ],
+        "independent_cache": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "address": [
+                "172.18.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "mtu": 9000,
+            "auto_route": true,
+            "strict_route": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "selector",
+            "tag": "select",
+            "outbounds": [
+                "proxy"
+            ],
+            "interrupt_exist_connections": true
+        },
         {
             "type": "trojan",
-            "tag": "proxy-main",
-            "server": "'${DOMAIN}'",
+            "tag": "proxy",
+            "server": "${SERVER_DOMAIN}",
             "server_port": 8446,
-            "password": "'${PASSWORD}'",
+            "password": "${SERVER_PASSWORD}",
             "tls": {
                 "enabled": true,
-                "server_name": "'${DOMAIN}'",
-                "insecure": false
+                "server_name": "${SERVER_DOMAIN}"
             }
-        }'
-    
-    echo "$base_config" | sed "s|PROXY_CONFIG_PLACEHOLDER|${trojan_proxy}|g" > ${CONFIG_DIR}/trojan.json
-    
-    # 保存配置信息
-    cat > ${CONFIG_DIR}/client_info.json << EOF
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "u3.ucweb.com"
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "quic",
+                "action": "reject"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-geolocation-!cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_domain_resolver": "local"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_fakeip": true,
+            "store_rdrc": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090"
+        }
+    }
+}
+EOF
+
+    # 保存客户端信息
+    cat > ./config/client_info.json << EOF
 {
-    "server": "${DOMAIN}",
-    "password": "${PASSWORD}",
-    "vless_uuid": "${VLESS_UUID}",
-    "vmess_uuid": "${VMESS_UUID}",
-    "tuic_uuid": "${TUIC_UUID}",
-    "proxy_ports": {
-        "mixed": 1080,
-        "http": 1081
-    },
-    "protocols": {
-        "hysteria2": "hysteria2.json",
-        "vless": "vless.json", 
-        "vmess": "vmess.json",
-        "shadowsocks": "shadowsocks.json",
-        "tuic": "tuic.json",
-        "trojan": "trojan.json"
-    },
+    "server_domain": "${SERVER_DOMAIN}",
+    "server_password": "${SERVER_PASSWORD}",
+    "supported_protocols": [
+        "hysteria2",
+        "vless",
+        "vmess",
+        "shadowsocks",
+        "tuic",
+        "trojan"
+    ],
+    "clash_api": "http://127.0.0.1:9090",
     "generated_at": "$(date -Iseconds)"
 }
 EOF
-    
+
     log_success "客户端配置生成完成"
+}
+
+create_docker_compose() {
+    log_step "创建Docker Compose配置..."
+    
+    cat > ./docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  sing-box:
+    image: ghcr.io/sagernet/sing-box:latest
+    container_name: sing-box
+    restart: always
+    volumes:
+      - ./config/config.json:/etc/sing-box/config.json
+    command: -D /var/lib/sing-box -C /etc/sing-box/ run
+    network_mode: host
+    privileged: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+EOF
+
+    log_success "Docker Compose 配置创建完成"
 }
 
 create_management_scripts() {
     log_step "创建管理脚本..."
     
     # 启动脚本
-    cat > ${CLIENT_DIR}/scripts/start_client.sh << EOF
+    cat > ./scripts/start_client.sh << 'EOF'
 #!/bin/bash
 
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="\$(dirname "\$SCRIPT_DIR")"
-CONFIG_FILE="\${1:-hysteria2.json}"
+CONFIG_FILE="${1:-hysteria2.json}"
+CONFIG_DIR="./config"
 
-if [[ ! -f "\${CLIENT_DIR}/configs/\${CONFIG_FILE}" ]]; then
-    echo "错误: 配置文件不存在: \${CONFIG_FILE}"
+cd "$(dirname "$0")/.."
+
+if [ ! -f "${CONFIG_DIR}/${CONFIG_FILE}" ]; then
+    echo "错误: 配置文件 ${CONFIG_DIR}/${CONFIG_FILE} 不存在"
     echo "可用配置:"
-    ls "\${CLIENT_DIR}/configs"/*.json 2>/dev/null | xargs -n1 basename
-    
+    ls ${CONFIG_DIR}/*.json 2>/dev/null | grep -v base_template.json | grep -v client_info.json | xargs -n1 basename
+    return 1
 fi
 
-echo "启动 Sing-box 客户端..."
-echo "配置文件: \${CONFIG_FILE}"
-echo "代理端口: 1080 (Mixed), 1081 (HTTP)"
+echo "启动客户端，使用配置: ${CONFIG_FILE}"
 
-# 检查是否已有进程运行
-if pgrep -f "sing-box.*run" > /dev/null; then
-    echo "检测到运行中的 sing-box 进程，正在停止..."
-    pkill -f "sing-box.*run"
-    sleep 2
-fi
-
-# 启动客户端
-cd "\${CLIENT_DIR}"
-nohup ./bin/sing-box run -c "configs/\${CONFIG_FILE}" > "logs/client.log" 2>&1 &
-
-CLIENT_PID=\$!
-echo "客户端已启动，PID: \${CLIENT_PID}"
-echo "查看日志: tail -f \${CLIENT_DIR}/logs/client.log"
-echo "停止客户端: \${CLIENT_DIR}/scripts/stop_client.sh"
-
-# 等待启动
-sleep 2
-
-# 检查进程是否正常运行
-if ps -p \$CLIENT_PID > /dev/null; then
-    echo "✓ 客户端启动成功"
-    echo ""
-    echo "代理设置:"
-    echo "  HTTP:  127.0.0.1:1081"
-    echo "  SOCKS: 127.0.0.1:1080"
+# 停止现有容器
+if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose down 2>/dev/null || true
 else
-    echo "✗ 客户端启动失败，请检查日志"
+    docker compose down 2>/dev/null || true
 fi
+
+# 复制指定配置
+cp "${CONFIG_DIR}/${CONFIG_FILE}" "${CONFIG_DIR}/config.json"
+
+# 启动服务
+if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose up -d
+else
+    docker compose up -d
+fi
+
+echo "客户端启动完成"
+echo "查看日志: ./scripts/manage_client.sh logs"
+echo "Clash API: http://127.0.0.1:9090"
+
+# 显示协议信息
+protocol=$(echo ${CONFIG_FILE} | cut -d'.' -f1)
+echo "当前协议: ${protocol}"
 EOF
-    
-    # 停止脚本
-    cat > ${CLIENT_DIR}/scripts/stop_client.sh << EOF
+
+    # 管理脚本
+    cat > ./scripts/manage_client.sh << 'EOF'
 #!/bin/bash
 
-echo "正在停止 Sing-box 客户端..."
-
-if pgrep -f "sing-box.*run" > /dev/null; then
-    pkill -f "sing-box.*run"
-    sleep 2
-    
-    if pgrep -f "sing-box.*run" > /dev/null; then
-        echo "强制停止..."
-        pkill -9 -f "sing-box.*run"
-    fi
-    
-    echo "✓ 客户端已停止"
-else
-    echo "没有运行中的客户端进程"
-fi
-EOF
-    
-    # 状态检查脚本
-    cat > ${CLIENT_DIR}/scripts/status_client.sh << EOF
-#!/bin/bash
-
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="\$(dirname "\$SCRIPT_DIR")"
-
-echo "=== Sing-box 客户端状态 ==="
-
-if pgrep -f "sing-box.*run" > /dev/null; then
-    PID=\$(pgrep -f "sing-box.*run")
-    echo "✓ 客户端正在运行 (PID: \$PID)"
-    
-    echo ""
-    echo "代理端口状态:"
-    netstat -ln | grep -E "(1080|1081)" | while read line; do
-        echo "  \$line"
-    done
-    
-    echo ""
-    echo "最近日志:"
-    tail -n 10 "\${CLIENT_DIR}/logs/client.log" 2>/dev/null || echo "无日志文件"
-else
-    echo "✗ 客户端未运行"
-fi
-EOF
-    
-    # 配置切换脚本
-    cat > ${CLIENT_DIR}/scripts/switch_config.sh << EOF
-#!/bin/bash
-
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="\$(dirname "\$SCRIPT_DIR")"
-
-echo "可用配置:"
-configs=(\$(ls "\${CLIENT_DIR}/configs"/*.json 2>/dev/null | xargs -n1 basename))
-
-if [[ \${#configs[@]} -eq 0 ]]; then
-    echo "没有找到配置文件"
-    
-fi
-
-for i in "\${!configs[@]}"; do
-    protocol=\$(echo "\${configs[\$i]}" | cut -d'.' -f1)
-    echo "\$((i+1)). \$protocol"
-done
-
-echo -n "请选择配置 (1-\${#configs[@]}): "
-read choice
-
-if [[ "\$choice" -gt 0 ]] && [[ "\$choice" -le "\${#configs[@]}" ]]; then
-    selected_config="\${configs[\$((choice-1))]}"
-    protocol=\$(echo "\$selected_config" | cut -d'.' -f1)
-    
-    echo "切换到协议: \$protocol"
-    
-    # 停止当前客户端
-    "\${CLIENT_DIR}/scripts/stop_client.sh"
-    sleep 1
-    
-    # 启动新配置
-    "\${CLIENT_DIR}/scripts/start_client.sh" "\$selected_config"
-else
-    echo "无效选择"
-    
-fi
-EOF
-    
-    # 设置权限
-    chmod +x ${CLIENT_DIR}/scripts/*.sh
-    
-    log_success "管理脚本创建完成"
-}
-
-create_test_scripts() {
-    log_step "创建测试脚本..."
-    
-    # 连接测试脚本
-    cat > ${CLIENT_DIR}/test/test_connection.sh << 'EOF'
-#!/bin/bash
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="$(dirname "$SCRIPT_DIR")"
-
-echo "=== 代理连接测试 ==="
-
-# 检查客户端是否运行
-if ! pgrep -f "sing-box.*run" > /dev/null; then
-    echo "✗ Sing-box 客户端未运行"
-    echo "请先启动客户端: ${CLIENT_DIR}/scripts/start_client.sh"
-    
-fi
-
-echo "✓ 检测到运行中的客户端"
-echo ""
-
-# 测试网站列表
-test_sites=(
-    "https://www.google.com"
-    "https://www.youtube.com"
-    "https://github.com"
-    "https://httpbin.org/ip"
-)
-
-echo "=== 直连测试 ==="
-echo -n "本地IP: "
-curl -s --connect-timeout 5 https://httpbin.org/ip 2>/dev/null | grep -o '"origin": "[^"]*' | cut -d'"' -f4 || echo "获取失败"
-
-echo ""
-echo "=== 代理连接测试 ==="
-
-for site in "${test_sites[@]}"; do
-    echo -n "测试 ${site} ... "
-    
-    # 使用HTTP代理测试
-    response=$(curl -s -o /dev/null -w "%{http_code}" \
-        --proxy http://127.0.0.1:1081 \
-        --connect-timeout 10 \
-        --max-time 30 \
-        "${site}" 2>/dev/null)
-    
-    if [[ "$response" == "200" ]]; then
-        echo "✓ 成功"
-    else
-        echo "✗ 失败 (${response})"
-    fi
-done
-
-echo ""
-echo "=== 代理IP检查 ==="
-echo -n "代理IP: "
-proxy_ip=$(curl -s --proxy http://127.0.0.1:1081 \
-    --connect-timeout 10 \
-    https://httpbin.org/ip 2>/dev/null | \
-    grep -o '"origin": "[^"]*' | cut -d'"' -f4)
-
-if [[ -n "$proxy_ip" ]]; then
-    echo "$proxy_ip"
-    
-    # 检查地理位置
-    echo -n "地理位置: "
-    location=$(curl -s --connect-timeout 5 \
-        "http://ip-api.com/json/${proxy_ip}" 2>/dev/null | \
-        grep -o '"country": "[^"]*' | cut -d'"' -f4)
-    
-    if [[ -n "$location" ]]; then
-        echo "$location"
-    else
-        echo "无法获取"
-    fi
-else
-    echo "无法获取代理IP"
-fi
-
-echo ""
-echo "=== 延迟测试 ==="
-
-# 测试代理延迟
-echo -n "代理延迟: "
-start_time=$(date +%s%3N)
-curl -s -o /dev/null --proxy http://127.0.0.1:1081 \
-    --connect-timeout 10 \
-    https://www.google.com >/dev/null 2>&1
-end_time=$(date +%s%3N)
-
-if [[ $? -eq 0 ]]; then
-    latency=$((end_time - start_time))
-    echo "${latency}ms"
-else
-    echo "测试失败"
-fi
-
-echo ""
-echo "测试完成"
-EOF
-    
-    # 性能测试脚本
-    cat > ${CLIENT_DIR}/test/test_performance.sh << 'EOF'
-#!/bin/bash
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="$(dirname "$SCRIPT_DIR")"
-
-echo "=== 代理性能测试 ==="
-
-if ! pgrep -f "sing-box.*run" > /dev/null; then
-    echo "✗ Sing-box 客户端未运行"
-    
-fi
-
-echo "✓ 客户端运行中"
-echo ""
-
-# CPU和内存使用率
-echo "=== 资源使用情况 ==="
-if command -v ps >/dev/null 2>&1; then
-    PID=$(pgrep -f "sing-box.*run")
-    if [[ -n "$PID" ]]; then
-        echo "进程ID: $PID"
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS
-            ps -p $PID -o pid,pcpu,pmem,rss,vsz,comm
-        else
-            # Linux
-            ps -p $PID -o pid,pcpu,pmem,rss,vsz,comm
-        fi
-    fi
-fi
-
-echo ""
-echo "=== 下载速度测试 ==="
-
-# 下载测试
-test_urls=(
-    "https://httpbin.org/bytes/1048576"  # 1MB
-    "https://httpbin.org/bytes/5242880"  # 5MB
-)
-
-for url in "${test_urls[@]}"; do
-    size=$(echo $url | grep -o '[0-9]*$')
-    size_mb=$((size / 1048576))
-    echo -n "下载 ${size_mb}MB 测试文件: "
-    
-    start_time=$(date +%s%3N)
-    curl -s -o /dev/null \
-        --proxy http://127.0.0.1:1081 \
-        --connect-timeout 10 \
-        --max-time 60 \
-        "$url"
-    
-    if [[ $? -eq 0 ]]; then
-        end_time=$(date +%s%3N)
-        duration=$((end_time - start_time))
-        
-        if [[ $duration -gt 0 ]]; then
-            speed=$((size * 1000 / duration))
-            speed_mb=$((speed / 1048576))
-            echo "${speed_mb}MB/s"
-        else
-            echo "速度过快，无法测量"
-        fi
-    else
-        echo "下载失败"
-    fi
-done
-
-echo ""
-echo "=== 并发连接测试 ==="
-
-# 并发连接测试
-echo "测试并发连接能力..."
-concurrent_count=5
-success_count=0
-
-for i in $(seq 1 $concurrent_count); do
-    curl -s -o /dev/null \
-        --proxy http://127.0.0.1:1081 \
-        --connect-timeout 5 \
-        --max-time 10 \
-        https://httpbin.org/ip &
-done
-
-# 等待所有后台任务完成
-wait
-
-# 统计成功连接
-for job in $(jobs -p); do
-    if wait $job; then
-        ((success_count++))
-    fi
-done
-
-echo "并发连接测试: ${success_count}/${concurrent_count} 成功"
-
-echo ""
-echo "性能测试完成"
-EOF
-    
-    chmod +x ${CLIENT_DIR}/test/*.sh
-    
-    log_success "测试脚本创建完成"
-}
-
-create_client_manager() {
-    log_step "创建客户端管理器..."
-    
-    cat > ${CLIENT_DIR}/client_manager.sh << 'EOF'
-#!/bin/bash
-
-# Sing-box 客户端管理器
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLIENT_DIR="$SCRIPT_DIR"
-
-show_help() {
-    echo "Sing-box 客户端管理器"
-    echo ""
-    echo "用法: $0 {start|stop|restart|status|switch|test|logs|info}"
-    echo ""
-    echo "命令:"
-    echo "  start [config]  - 启动客户端 (默认: hysteria2.json)"
-    echo "  stop           - 停止客户端"
-    echo "  restart        - 重启客户端"
-    echo "  status         - 查看状态"
-    echo "  switch         - 切换协议配置"
-    echo "  test           - 运行连接测试"
-    echo "  perf           - 运行性能测试"
-    echo "  logs           - 查看日志"
-    echo "  info           - 显示配置信息"
-    echo ""
-    echo "示例:"
-    echo "  $0 start vless.json    # 启动VLESS配置"
-    echo "  $0 switch              # 交互式切换协议"
-}
+cd "$(dirname "$0")/.."
 
 case "${1:-}" in
     "start")
         shift
-        "${CLIENT_DIR}/scripts/start_client.sh" $@
+        bash ./scripts/start_client.sh $@
         ;;
     "stop")
-        "${CLIENT_DIR}/scripts/stop_client.sh"
+        if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose down
+        else
+            docker compose down
+        fi
+        echo "客户端已停止"
         ;;
     "restart")
-        echo "重启客户端..."
-        "${CLIENT_DIR}/scripts/stop_client.sh"
-        sleep 2
-        "${CLIENT_DIR}/scripts/start_client.sh" "${2:-hysteria2.json}"
+        if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose restart
+        else
+            docker compose restart
+        fi
+        echo "客户端已重启"
         ;;
     "status")
-        "${CLIENT_DIR}/scripts/status_client.sh"
-        ;;
-    "switch")
-        "${CLIENT_DIR}/scripts/switch_config.sh"
-        ;;
-    "test")
-        "${CLIENT_DIR}/test/test_connection.sh"
-        ;;
-    "perf")
-        "${CLIENT_DIR}/test/test_performance.sh"
+        if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose ps
+        else
+            docker compose ps
+        fi
+        echo ""
+        echo "TUN 接口状态:"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            ifconfig | grep -A 3 "tun"
+        else
+            ip addr show | grep -A 3 "tun"
+        fi
         ;;
     "logs")
-        if [[ -f "${CLIENT_DIR}/logs/client.log" ]]; then
-            tail -f "${CLIENT_DIR}/logs/client.log"
+        if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose logs -f --tail=100
         else
-            echo "日志文件不存在"
+            docker compose logs -f --tail=100
+        fi
+        ;;
+    "switch")
+        echo "可用协议配置:"
+        configs=($(ls config/*.json | grep -v base_template.json | grep -v client_info.json | xargs -n1 basename))
+        for i in "${!configs[@]}"; do
+            protocol=$(echo "${configs[$i]}" | cut -d'.' -f1)
+            echo "$((i+1)). ${protocol}"
+        done
+        echo -n "选择协议 (1-${#configs[@]}): "
+        read choice
+        if [ "$choice" -gt 0 ] && [ "$choice" -le "${#configs[@]}" ]; then
+            bash ./scripts/start_client.sh "${configs[$((choice-1))]}"
         fi
         ;;
     "info")
-        echo "=== 客户端信息 ==="
-        if [[ -f "${CLIENT_DIR}/configs/client_info.json" ]]; then
-            cat "${CLIENT_DIR}/configs/client_info.json"
-        else
-            echo "配置信息文件不存在"
+        if [ -f "config/client_info.json" ]; then
+            echo "客户端信息:"
+            if command -v jq >/dev/null 2>&1; then
+                cat config/client_info.json | jq '.'
+            else
+                cat config/client_info.json
+            fi
         fi
         echo ""
-        echo "=== 可用配置 ==="
-        ls "${CLIENT_DIR}/configs"/*.json 2>/dev/null | xargs -n1 basename
+        echo "Clash Dashboard: http://127.0.0.1:9090/ui"
+        ;;
+    "test")
+        echo "测试网络连接..."
+        echo "检测 IP 地址:"
+        curl -s --max-time 10 https://ipinfo.io/ip 2>/dev/null || echo "连接失败"
+        echo ""
+        echo "检测 Google 连通性:"
+        curl -s --max-time 5 -o /dev/null -w "%{http_code}" https://www.google.com || echo "连接失败"
+        echo ""
         ;;
     *)
-        show_help
-        
+        echo "Sing-box 客户端管理"
+        echo "用法: $0 {start [protocol]|stop|restart|status|logs|switch|info|test}"
+        echo ""
+        echo "示例:"
+        echo "  $0 start hysteria2.json  # 启动指定协议"
+        echo "  $0 switch                # 交互式切换协议"
+        echo "  $0 test                  # 测试网络连接"
+        echo "  $0 status                # 查看运行状态"
+        echo ""
+        echo "可用协议:"
+        ls config/*.json 2>/dev/null | grep -v base_template.json | grep -v client_info.json | xargs -n1 basename | sed 's/.json//' | sort
+        return 0
         ;;
 esac
 EOF
+
+    chmod +x ./scripts/start_client.sh
+    chmod +x ./scripts/manage_client.sh
     
-    chmod +x ${CLIENT_DIR}/client_manager.sh
-    
-    log_success "客户端管理器创建完成"
+    log_success "管理脚本创建完成"
 }
 
-create_documentation() {
-    log_step "创建使用文档..."
+deploy_client() {
+    log_step "选择并启动客户端协议..."
     
-    cat > ${CLIENT_DIR}/README.md << EOF
-# Sing-box 客户端使用指南
-
-## 概述
-
-这是一个便携式的 Sing-box 客户端，所有文件都在当前目录下，不需要系统级别的安装或配置。
-
-## 目录结构
-
-\`\`\`
-singbox_client/
-├── bin/                    # Sing-box 可执行文件
-├── configs/                # 配置文件
-├── scripts/                # 管理脚本
-├── test/                   # 测试脚本
-├── logs/                   # 日志文件
-├── cache/                  # 缓存文件
-├── client_manager.sh       # 主管理器
-└── README.md              # 使用说明
-\`\`\`
-
-## 快速开始
-
-### 1. 启动客户端
-\`\`\`bash
-./client_manager.sh start
-\`\`\`
-
-### 2. 配置代理
-启动后，代理地址为：
-- HTTP代理: 127.0.0.1:1081
-- SOCKS代理: 127.0.0.1:1080
-
-### 3. 测试连接
-\`\`\`bash
-./client_manager.sh test
-\`\`\`
-
-## 详细使用方法
-
-### 管理命令
-
-\`\`\`bash
-# 启动指定协议
-./client_manager.sh start vless.json
-
-# 交互式切换协议
-./client_manager.sh switch
-
-# 查看运行状态
-./client_manager.sh status
-
-# 停止客户端
-./client_manager.sh stop
-
-# 重启客户端
-./client_manager.sh restart
-
-# 查看实时日志
-./client_manager.sh logs
-
-# 显示配置信息
-./client_manager.sh info
-\`\`\`
-
-### 测试工具
-
-\`\`\`bash
-# 连接测试
-./client_manager.sh test
-
-# 性能测试
-./client_manager.sh perf
-\`\`\`
-
-## 可用协议配置
-
-| 协议 | 配置文件 | 特点 |
-|------|----------|------|
-| Hysteria2 | hysteria2.json | 高速度，基于QUIC |
-| VLESS | vless.json | 轻量级，WebSocket传输 |
-| VMess | vmess.json | 经典协议，兼容性好 |
-| Shadowsocks | shadowsocks.json | 简单稳定，广泛支持 |
-| TUIC | tuic.json | 基于QUIC，移动友好 |
-| Trojan | trojan.json | TLS伪装，隐蔽性好 |
-
-## 浏览器配置
-
-### Chrome/Edge
-1. 设置 → 高级 → 代理设置
-2. 使用代理服务器: 127.0.0.1:1081
-
-### Firefox  
-1. 设置 → 网络设置
-2. 手动代理配置
-3. HTTP代理: 127.0.0.1:1081
-
-### Safari (macOS)
-1. 系统偏好设置 → 网络
-2. 高级 → 代理
-3. 勾选"网页代理 (HTTP)"
-4. 服务器: 127.0.0.1:1081
-
-## 故障排除
-
-### 常见问题
-
-1. **客户端启动失败**
-   - 检查端口是否被占用: \`netstat -ln | grep 1080\`
-   - 查看错误日志: \`./client_manager.sh logs\`
-
-2. **连接失败**
-   - 验证服务器配置是否正确
-   - 检查网络连接: \`./client_manager.sh test\`
-
-3. **速度慢**
-   - 尝试切换协议: \`./client_manager.sh switch\`
-   - 运行性能测试: \`./client_manager.sh perf\`
-
-### 日志查看
-
-\`\`\`bash
-# 实时日志
-./client_manager.sh logs
-
-# 历史日志
-cat logs/client.log
-
-# 详细调试日志
-tail -f logs/singbox.log
-\`\`\`
-
-## 高级配置
-
-### 修改代理端口
-编辑配置文件中的 \`listen_port\` 字段：
-\`\`\`json
-"inbounds": [
-    {
-        "type": "mixed",
-        "listen_port": 1080  // 修改此端口
-    }
-]
-\`\`\`
-
-### 添加路由规则
-在配置文件的 \`route.rules\` 中添加自定义规则。
-
-## 安全注意事项
-
-1. 不要在公共网络上暴露代理端口
-2. 定期更新客户端版本
-3. 妥善保管服务器配置信息
-4. 使用强密码和安全的传输协议
-
-## 更新客户端
-
-重新运行部署脚本即可更新到最新版本：
-\`\`\`bash
-./client_deployment_unix.sh
-\`\`\`
-
-## 卸载
-
-删除整个客户端目录即可：
-\`\`\`bash
-rm -rf singbox_client/
-\`\`\`
-
----
-
-如有问题，请查看日志文件或联系技术支持。
-EOF
+    echo "可用协议配置:"
+    configs=($(ls config/*.json | grep -v base_template.json | grep -v client_info.json | xargs -n1 basename))
     
-    log_success "使用文档创建完成"
+    for i in "${!configs[@]}"; do
+        protocol=$(echo "${configs[$i]}" | cut -d'.' -f1)
+        echo "$((i+1)). $protocol"
+    done
+    
+    echo -n "请选择要启动的协议 (1-${#configs[@]}) [默认: 1]: "
+    read choice
+    
+    if [[ -z "$choice" ]]; then
+        choice=1
+    fi
+    
+    if [[ "$choice" -gt 0 ]] && [[ "$choice" -le "${#configs[@]}" ]]; then
+        selected_config="${configs[$((choice-1))]}"
+        protocol=$(echo "$selected_config" | cut -d'.' -f1)
+        
+        log_info "启动协议: $protocol"
+        bash ./scripts/start_client.sh "$selected_config"
+        
+        # 等待服务启动
+        sleep 3
+        
+        # 检查服务状态
+        if command -v docker-compose >/dev/null 2>&1; then
+            container_status=$(docker-compose ps 2>/dev/null)
+        else
+            container_status=$(docker compose ps 2>/dev/null)
+        fi
+        
+        if echo "$container_status" | grep -q "Up"; then
+            log_success "协议 $protocol 启动成功"
+            
+            echo ""
+            echo "=== 连接信息 ==="
+            echo "服务器: ${SERVER_DOMAIN}"
+            echo "协议: ${protocol}"
+            echo "Clash API: http://127.0.0.1:9090"
+            echo ""
+            echo "管理命令:"
+            echo "  查看状态: ./scripts/manage_client.sh status"
+            echo "  切换协议: ./scripts/manage_client.sh switch"
+            echo "  查看日志: ./scripts/manage_client.sh logs"
+            echo "  测试连接: ./scripts/manage_client.sh test"
+            
+            return 0
+        else
+            log_error "协议 $protocol 启动失败"
+            return 1
+        fi
+    else
+        log_error "无效选择"
+        return 1
+    fi
 }
 
 show_deployment_result() {
     echo -e "${GREEN}"
     cat << 'EOF'
 ╔══════════════════════════════════════════════════╗
-║              客户端部署完成！                    ║
+║               客户端部署完成！                   ║
 ╚══════════════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
     
-    echo "客户端目录: ${CLIENT_DIR}"
-    echo "管理命令: ${CLIENT_DIR}/client_manager.sh"
+    echo "项目目录: $(pwd)"
+    echo "管理脚本: ./scripts/manage_client.sh"
     echo ""
-    echo "快速开始:"
-    echo "  启动客户端: ${CLIENT_DIR}/client_manager.sh start"
-    echo "  测试连接:   ${CLIENT_DIR}/client_manager.sh test" 
-    echo "  切换协议:   ${CLIENT_DIR}/client_manager.sh switch"
-    echo "  查看状态:   ${CLIENT_DIR}/client_manager.sh status"
+    echo "快速操作:"
+    echo "  启动客户端: ./scripts/manage_client.sh start [protocol]"
+    echo "  切换协议: ./scripts/manage_client.sh switch"
+    echo "  查看状态: ./scripts/manage_client.sh status"
+    echo "  测试连接: ./scripts/manage_client.sh test"
+    echo "  查看日志: ./scripts/manage_client.sh logs"
     echo ""
-    echo "代理设置:"
-    echo "  HTTP代理:  127.0.0.1:1081"
-    echo "  SOCKS代理: 127.0.0.1:1080"
+    echo "Clash Dashboard: http://127.0.0.1:9090"
     echo ""
-    echo "详细说明: ${CLIENT_DIR}/README.md"
+    echo "支持的协议: hysteria2, vless, vmess, shadowsocks, tuic, trojan"
     
-    # 显示服务器信息
-    if [[ -f "${CONFIG_DIR}/client_info.json" ]]; then
+    if [[ "$OS" == "macos" ]]; then
         echo ""
-        echo "服务器信息:"
-        echo "  域名: ${DOMAIN}"
-        
-        local password=$(grep '"password"' ${CONFIG_DIR}/client_info.json | cut -d'"' -f4)
-        if [[ "$password" != "your_password_here" ]]; then
-            echo "  密码: ${password}"
-        fi
+        echo "macOS 特别提示:"
+        echo "1. 首次运行可能需要授权网络权限"
+        echo "2. 如遇权限问题，请在系统偏好设置中允许"
+        echo "3. TUN 模式需要管理员权限"
+    elif [[ "$OS" == "linux" ]]; then
+        echo ""
+        echo "Linux 特别提示:"
+        echo "1. TUN 模式需要 root 权限或 CAP_NET_ADMIN 能力"
+        echo "2. 确保内核支持 TUN/TAP 设备"
+        echo "3. 如遇权限问题，请使用 sudo 运行"
     fi
+}
+
+delete_all() {
+    log_step "删除所有文件..."
+    
+    # 停止服务
+    cd ${PROJECT_DIR} 2>/dev/null || true
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose down 2>/dev/null || true
+    else
+        docker compose down 2>/dev/null || true
+    fi
+    
+    # 删除容器和镜像
+    docker stop sing-box 2>/dev/null || true
+    docker rm sing-box 2>/dev/null || true
+    
+    # 返回上级目录并删除项目目录
+    cd ..
+    rm -rf ${PROJECT_DIR}
+    
+    log_success "所有文件已删除"
 }
 
 main() {
     show_banner
     
-    log_info "开始部署 Sing-box 客户端 (${OS}/${ARCH})"
+    log_info "开始部署 Sing-box 客户端"
+    log_info "服务器: ${SERVER_DOMAIN}"
     
     echo -n "确认开始部署? (y/N): "
     read confirm
     if [[ "$confirm" != "y" ]] && [[ "$confirm" != "Y" ]]; then
         log_info "部署已取消"
-        
+        return 0
     fi
     
-    create_directory_structure
-    download_singbox
-    generate_client_configs
-    create_management_scripts
-    create_test_scripts
-    create_client_manager
-    create_documentation
+    if ! detect_os; then
+        return 1
+    fi
     
-    show_deployment_result
-    log_success "客户端部署完成！"
+    if ! check_root_privileges; then
+        return 1
+    fi
+    
+    if ! install_dependencies; then
+        return 1
+    fi
+    
+    setup_project_structure
+    generate_client_configs
+    create_docker_compose
+    create_management_scripts
+    
+    if deploy_client; then
+        show_deployment_result
+        log_success "客户端部署完成！"
+    else
+        log_error "客户端部署失败"
+        return 1
+    fi
 }
 
-# 执行主函数
-main
-EOF
+# 主程序入口
+case "${1:-}" in
+    "")
+        main
+        ;;
+    "delete")
+        delete_all
+        ;;
+    "switch")
+        if [[ -d "${PROJECT_DIR}" ]]; then
+            cd ${PROJECT_DIR}
+            bash ./scripts/manage_client.sh switch
+        else
+            log_error "客户端未安装"
+        fi
+        ;;
+    "status")
+        if [[ -d "${PROJECT_DIR}" ]]; then
+            cd ${PROJECT_DIR}
+            bash ./scripts/manage_client.sh status
+        else
+            log_error "客户端未安装"
+        fi
+        ;;
+    "test")
+        if [[ -d "${PROJECT_DIR}" ]]; then
+            cd ${PROJECT_DIR}
+            bash ./scripts/manage_client.sh test
+        else
+            log_error "客户端未安装"
+        fi
+        ;;
+    *)
+        echo "Sing-box 客户端一键部署脚本"
+        echo "用法: $0 [delete|switch|status|test]"
+        echo ""
+        echo "  无参数   - 执行完整部署"
+        echo "  delete   - 删除所有文件"
+        echo "  switch   - 切换协议"
+        echo "  status   - 查看状态"
+        echo "  test     - 测试连接"
+        return 0
+        ;;
+esac
