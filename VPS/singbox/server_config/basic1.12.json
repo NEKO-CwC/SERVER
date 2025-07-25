@@ -29,7 +29,22 @@
       }   
     },
     {
-
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "::",
+      "listen_port": 36713,
+      "users": [
+        {
+          "name": "neko",
+          "password": "nekosaiko"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "284072.xyz",
+        "key_path": "/opt/ssl/284072.xyz/private.key",
+        "certificate_path": "/opt/ssl/284072.xyz/fullchain.pem"
+      }  
     }
   ],
   "outbounds": [

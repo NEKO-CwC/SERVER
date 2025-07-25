@@ -1,60 +1,60 @@
 {
   "log": {
     "disabled": false,
-    "level": "info",
+    "level": "debug",
     "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "tag": "local",
-        "address": "https://223.5.5.5/dns-query",
-        "strategy": "ipv4_only",
-        "detour": "direct"
+        "type": "h3",
+        "tag": "cloudflare",
+        "server": "1.1.1.1",
+        "detour": "select"
       },
       {
-        "tag": "cloudflare",
-        "address": "1.1.1.1",
-        "strategy": "ipv4_only",
-        "detour": "proxy"
+        "type": "h3",
+        "tag": "aliyun",
+        "server": "223.5.5.5"
+      },
+      {
+        "type": "local",
+        "tag": "local"
       }
     ],
     "rules": [
       {
-        "type": "logical",
-        "mode": "or",
-        "rules": [
-          {
-            "rule_set": ["karing-ruleset-full-gfw"],
-            "invert": true
-          },
-          {
-            "rule_set": ["karing-ruleset-cnip", "karing-ruleset-cn-company", "karing-ruleset-geolocation-cn"]
-          }
+        "domain_suffix": [  
+          "284072.xyz"
         ],
-        "server": "local"
+        "action": "route",
+        "server": "aliyun"
       },
       {
-        "query_type": [
-          "A"
-        ],
-        "server": "local"
+        "ip_is_private": true,
+        "rule_set": ["karing-ruleset-cnip"],
+        "action": "route",
+        "server": "aliyun"
+      },
+      {
+        "ip_is_private": true,
+        "rule_set": ["karing-ruleset-cn-company"],
+        "action": "route",
+        "invert": true,
+        "server": "cloudflare"
       }
     ],
-    "independent_cache": true
+    "strategy": "ipv4_only"
   },
   "inbounds": [
     {
       "type": "tun",
       "tag": "tun-in",
-      "interface_name": "tun9",
       "address": [
-        "172.18.0.1/30"
+        "172.19.0.1/30"
       ],
       "mtu": 9000,
       "auto_route": true,
-      "sniff": true,
-      "sniff_override_destination": true,
       "strict_route": true
     }
   ],
@@ -63,9 +63,10 @@
       "type": "selector",
       "tag": "select",
       "outbounds": [
-        "proxy"
-      ],
-      "interrupt_exist_connections": true
+        "proxy-jp",
+        "proxy",
+        "anytls-in"
+      ]
     },
     {
       "type": "hysteria2",
@@ -80,11 +81,40 @@
       }
     },
     {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "server": "284072.xyz",
+      "server_port": 36713,
+      "password": "nekosaiko",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "284072.xyz"
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "proxy-jp",
+      "server": "jp.284072.xyz",
+      "server_port": 36712,
+      "password": "nekosaiko",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "jp.284072.xyz"
+      }
+    },
+    {
       "type": "direct",
       "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
     }
   ],
   "route": {
+    "default_domain_resolver": "aliyun",
     "rules": [
       {
         "action": "sniff"
@@ -94,12 +124,16 @@
         "action": "hijack-dns"
       },
       {
+        "protocol": "quic",
+        "action": "reject"
+      },
+      {
         "ip_is_private": true,
         "outbound": "direct"
       },
       {
         "rule_set": ["karing-ruleset-local"],
-        "outbound": "direct"
+        "outbound": "block"
       },
       {
         "domain_suffix": [
@@ -119,7 +153,8 @@
       },
       {
         "ip_cidr": [  
-          "45.62.114.159/32"
+          "45.62.114.159/32",
+          "47.79.145.31/32"
         ],
         "outbound": "direct"
       },
@@ -178,9 +213,7 @@
         "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/geo/geosite/geolocation-cn.srs",
         "download_detour": "proxy"
       }
-    ],
-    "auto_detect_interface": true,
-    "default_domain_resolver": "local"
+    ]
   },
   "experimental": {
     "cache_file": {
@@ -189,7 +222,8 @@
       "store_rdrc": true
     },
     "clash_api": {
-      "external_controller": "127.0.0.1:9090"
+      "external_controller": "127.0.0.1:9090",
+      "secret": "nekosaiko"
     }
   }
 }
