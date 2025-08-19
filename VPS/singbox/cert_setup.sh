@@ -785,164 +785,171 @@ main() {
 }
 
 # 脚本参数处理
-case "${1:-}" in
-    "setup")
-        shift
-        FORCE_RESET=false
-        
-        # 处理参数
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                -d)
-                    DOMAIN="$2"
-                    shift 2
-                    ;;
-                --force-reset)
-                    FORCE_RESET=true
-                    shift
-                    ;;
-                --debug)
-                    DEBUG_MODE=true
-                    shift
-                    ;;
-                --log-file)
-                    LOG_FILE="$2"
-                    shift 2
-                    ;;
-                -h)
-                    show_help
-                    exit 0
-                    ;;
-                *)
-                    log_error "未知选项: $1"
-                    show_help
-                    exit 1
-                    ;;
-            esac
-        done
-        
-        # 初始化日志
-        if [ "$DEBUG_MODE" = true ]; then
-            log_debug "调试模式已启用"
-            log_debug "脚本参数: DOMAIN=$DOMAIN, FORCE_RESET=$FORCE_RESET, LOG_FILE=$LOG_FILE"
-        fi
-        
-        # 创建日志目录
-        mkdir -p /var/log
-        if [ -n "$LOG_FILE" ]; then
-            mkdir -p "$(dirname "$LOG_FILE")"
-            log_info "自定义日志文件: $LOG_FILE"
-        fi
-        
-        # 调用main函数，传递force_reset参数
-        main "$FORCE_RESET"
-        ;;
-    "renew")
-        shift
-        # 处理renew命令的参数
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --debug)
-                    DEBUG_MODE=true
-                    shift
-                    ;;
-                --log-file)
-                    LOG_FILE="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "renew命令不支持选项: $1"
-                    exit 1
-                    ;;
-            esac
-        done
-        
-        log_info "手动续期证书..."
-        if [ "$DEBUG_MODE" = true ]; then
-            log_debug "执行: ~/.acme.sh/acme.sh --cron --force --debug 2"
-            ~/.acme.sh/acme.sh --cron --force --debug 2
-        else
-            ~/.acme.sh/acme.sh --cron --force
-        fi
-        ;;
-    "status")
-        shift
-        # 处理status命令的参数
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                -d)
-                    DOMAIN="$2"
-                    shift 2
-                    ;;
-                --debug)
-                    DEBUG_MODE=true
-                    shift
-                    ;;
-                *)
-                    log_error "status命令不支持选项: $1"
-                    exit 1
-                    ;;
-            esac
-        done
-        
-        # 如果没有指定域名，尝试从证书目录推断
-        if [ -z "$DOMAIN" ]; then
-            if [ -d "/opt/ssl" ]; then
-                for domain_dir in /opt/ssl/*/; do
-                    if [ -d "$domain_dir" ]; then
-                        domain_name=$(basename "$domain_dir")
-                        log_info "检查域名: $domain_name"
-                        verify_certificate "$domain_name"
-                    fi
-                done
-            else
-                log_error "未找到证书目录"
+cli() {
+    case "${1:-}" in
+        "setup")
+            shift
+            FORCE_RESET=false
+            
+            # 处理参数
+            while [[ $# -gt 0 ]]; do
+                case $1 in
+                    -d)
+                        DOMAIN="$2"
+                        shift 2
+                        ;;
+                    --force-reset)
+                        FORCE_RESET=true
+                        shift
+                        ;;
+                    --debug)
+                        DEBUG_MODE=true
+                        shift
+                        ;;
+                    --log-file)
+                        LOG_FILE="$2"
+                        shift 2
+                        ;;
+                    -h)
+                        show_help
+                        return 0
+                        ;;
+                    *)
+                        log_error "未知选项: $1"
+                        show_help
+                        return 1
+                        ;;
+                esac
+            done
+            
+            # 初始化日志
+            if [ "$DEBUG_MODE" = true ]; then
+                log_debug "调试模式已启用"
+                log_debug "脚本参数: DOMAIN=$DOMAIN, FORCE_RESET=$FORCE_RESET, LOG_FILE=$LOG_FILE"
             fi
-        else
-            verify_certificate
-        fi
-        ;;
-    "reset")
-        shift
-        # 处理reset命令的参数
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --debug)
-                    DEBUG_MODE=true
-                    shift
-                    ;;
-                *)
-                    log_error "reset命令不支持选项: $1"
-                    exit 1
-                    ;;
-            esac
-        done
-        
-        check_root || exit 1
-        reset_environment
-        ;;
-    "clean")
-        log_info "清理nginx容器..."
-        docker stop nginx-ssl nginx-cert 2>/dev/null || true
-        docker rm nginx-ssl nginx-cert 2>/dev/null || true
-        log_info "清理完成"
-        ;;
-    "-h"|"--help")
-        show_help
-        exit 0
-        ;;
-    "-v"|"--version")
-        show_version
-        exit 0
-        ;;
-    "")
-        log_error "未指定命令"
-        show_help
-        exit 1
-        ;;
-    *)
-        log_error "未知命令: $1"
-        show_help
-        exit 1
-        ;;
-esac
+            
+            # 创建日志目录
+            mkdir -p /var/log
+            if [ -n "$LOG_FILE" ]; then
+                mkdir -p "$(dirname "$LOG_FILE")"
+                log_info "自定义日志文件: $LOG_FILE"
+            fi
+            
+            # 调用main函数，传递force_reset参数
+            main "$FORCE_RESET"
+            ;;
+        "renew")
+            shift
+            # 处理renew命令的参数
+            while [[ $# -gt 0 ]]; do
+                case $1 in
+                    --debug)
+                        DEBUG_MODE=true
+                        shift
+                        ;;
+                    --log-file)
+                        LOG_FILE="$2"
+                        shift 2
+                        ;;
+                    *)
+                        log_error "renew命令不支持选项: $1"
+                        return 1
+                        ;;
+                esac
+            done
+            
+            log_info "手动续期证书..."
+            if [ "$DEBUG_MODE" = true ]; then
+                log_debug "执行: ~/.acme.sh/acme.sh --cron --force --debug 2"
+                ~/.acme.sh/acme.sh --cron --force --debug 2
+            else
+                ~/.acme.sh/acme.sh --cron --force
+            fi
+            ;;
+        "status")
+            shift
+            # 处理status命令的参数
+            while [[ $# -gt 0 ]]; do
+                case $1 in
+                    -d)
+                        DOMAIN="$2"
+                        shift 2
+                        ;;
+                    --debug)
+                        DEBUG_MODE=true
+                        shift
+                        ;;
+                    *)
+                        log_error "status命令不支持选项: $1"
+                        return 1
+                        ;;
+                esac
+            done
+            
+            # 如果没有指定域名，尝试从证书目录推断
+            if [ -z "$DOMAIN" ]; then
+                if [ -d "/opt/ssl" ]; then
+                    for domain_dir in /opt/ssl/*/; do
+                        if [ -d "$domain_dir" ]; then
+                            domain_name=$(basename "$domain_dir")
+                            log_info "检查域名: $domain_name"
+                            verify_certificate "$domain_name"
+                        fi
+                    done
+                else
+                    log_error "未找到证书目录"
+                fi
+            else
+                verify_certificate
+            fi
+            ;;
+        "reset")
+            shift
+            # 处理reset命令的参数
+            while [[ $# -gt 0 ]]; do
+                case $1 in
+                    --debug)
+                        DEBUG_MODE=true
+                        shift
+                        ;;
+                    *)
+                        log_error "reset命令不支持选项: $1"
+                        return 1
+                        ;;
+                esac
+            done
+            
+            check_root || return 1
+            reset_environment
+            ;;
+        "clean")
+            log_info "清理nginx容器..."
+            docker stop nginx-ssl nginx-cert 2>/dev/null || true
+            docker rm nginx-ssl nginx-cert 2>/dev/null || true
+            log_info "清理完成"
+            ;;
+        "-h"|"--help")
+            show_help
+            return 0
+            ;;
+        "-v"|"--version")
+            show_version
+            return 0
+            ;;
+        "")
+            log_error "未指定命令"
+            show_help
+            return 1
+            ;;
+        *)
+            log_error "未知命令: $1"
+            show_help
+            return 1
+            ;;
+    esac
+}
+
+# 脚本入口点
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    cli "$@"
+fi

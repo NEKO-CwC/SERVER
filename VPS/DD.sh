@@ -27,7 +27,7 @@ log_step() {
 
 error_exit() {
     log_error "$1"
-    exit 1
+    return 1
 }
 
 # 检查依赖
@@ -43,7 +43,7 @@ check_dependencies() {
     if [[ ${#missing_dependencies[@]} -ne 0 ]]; then
         log_error "缺少以下依赖: ${missing_dependencies[*]}"
         log_info "请安装缺少的依赖后重试"
-        exit 1
+        return 1
     fi
 }
 # 获取reinstall.sh下载链接
