@@ -7,9 +7,15 @@
   "dns": {
     "servers": [
       {
-        "type": "h3",
+        "type": "udp",
         "tag": "aliyun",
         "server": "223.5.5.5"
+      },
+      {
+        "type": "udp",
+        "tag": "cloudflare",
+        "server": "8.8.8.8",
+        "detour": "select"
       },
       {
         "type": "local",
@@ -32,10 +38,10 @@
       },
       {
         "ip_is_private": true,
-        "rule_set": ["karing-ruleset-cn-company"],
+        "rule_set": ["karing-ruleset-cnip"],
         "action": "route",
         "invert": true,
-        "server": "aliyn"
+        "server": "cloudflare"
       }
     ],
     "strategy": "ipv4_only"
@@ -58,7 +64,8 @@
       "tag": "select",
       "outbounds": [
         "proxy-jp",
-        "proxy"
+        "proxy",
+        "anytls-in"
       ]
     },
     {
@@ -66,6 +73,18 @@
       "tag": "proxy",
       "server": "284072.xyz",
       "server_port": 36712,
+      "password": "nekosaiko",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "284072.xyz"
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "server": "284072.xyz",
+      "server_port": 36713,
       "password": "nekosaiko",
       "tls": {
         "enabled": true,
@@ -88,6 +107,10 @@
     {
       "type": "direct",
       "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
     }
   ],
   "route": {
@@ -101,11 +124,11 @@
         "action": "hijack-dns"
       },
       {
-        "ip_is_private": true,
-        "outbound": "direct"
+        "protocol": "quic",
+        "action": "reject"
       },
       {
-        "rule_set": ["karing-ruleset-local"],
+        "ip_is_private": true,
         "outbound": "direct"
       },
       {
@@ -133,7 +156,7 @@
       },
       {
         "rule_set": ["karing-ruleset-telegram", "karing-ruleset-proxy-common", "karing-ruleset-full-gfw"],
-        "outbound": "direct"
+        "outbound": "select"
       }
     ],
     "rule_set": [
@@ -186,8 +209,7 @@
         "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/geo/geosite/geolocation-cn.srs",
         "download_detour": "proxy"
       }
-    ],
-    "final": "direct"
+    ]
   },
   "experimental": {
     "cache_file": {

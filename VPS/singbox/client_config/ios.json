@@ -16,7 +16,7 @@
         "tag": "cloudflare",
         "address": "1.1.1.1",
         "strategy": "ipv4_only",
-        "detour": "proxy"
+        "detour": "select"
       }
     ],
     "rules": [
