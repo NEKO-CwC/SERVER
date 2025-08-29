@@ -1,0 +1,203 @@
+{
+  "log": {
+    "disabled": false,
+    "level": "debug",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "h3",
+        "tag": "aliyun",
+        "server": "223.5.5.5"
+      },
+      {
+        "type": "local",
+        "tag": "local"
+      }
+    ],
+    "rules": [
+      {
+        "domain_suffix": [  
+          "284072.xyz"
+        ],
+        "action": "route",
+        "server": "aliyun"
+      },
+      {
+        "ip_is_private": true,
+        "rule_set": ["karing-ruleset-cnip"],
+        "action": "route",
+        "server": "aliyun"
+      },
+      {
+        "ip_is_private": true,
+        "rule_set": ["karing-ruleset-cn-company"],
+        "action": "route",
+        "invert": true,
+        "server": "aliyn"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "mtu": 9000,
+      "auto_route": true,
+      "strict_route": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": [
+        "proxy-jp",
+        "proxy"
+      ]
+    },
+    {
+      "type": "hysteria2",
+      "tag": "proxy",
+      "server": "284072.xyz",
+      "server_port": 36712,
+      "password": "nekosaiko",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "284072.xyz"
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "proxy-jp",
+      "server": "jp.284072.xyz",
+      "server_port": 36712,
+      "password": "nekosaiko",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "jp.284072.xyz"
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "aliyun",
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["karing-ruleset-local"],
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          "u3.ucweb.com"
+        ],
+        "action": "reject"
+      },
+      {
+        "rule_set": ["karing-ruleset-cnip", "karing-ruleset-cn-company", "karing-ruleset-geolocation-cn"],
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          "284072.xyz"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr": [  
+          "45.62.114.159/32",
+          "47.79.145.31/32"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["karing-ruleset-telegram", "karing-ruleset-proxy-common", "karing-ruleset-full-gfw"],
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-cnip",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ChinaIp.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-cn-company",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ChinaCompanyIp.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-telegram",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/Telegram.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-proxy-common",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ProxyLite.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-local",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/LocalAreaNetwork.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-full-gfw",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ProxyGFWlist.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "type": "remote",
+        "tag": "karing-ruleset-geolocation-cn",
+        "format": "binary",
+        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/geo/geosite/geolocation-cn.srs",
+        "download_detour": "proxy"
+      }
+    ],
+    "final": "direct"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_fakeip": true,
+      "store_rdrc": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "secret": "nekosaiko"
+    }
+  }
+}

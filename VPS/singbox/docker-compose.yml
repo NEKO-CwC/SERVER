@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  sing-box:
+    image: ghcr.io/sagernet/sing-box:v1.12.0-beta.35
+    container_name: sing-box-server
+    restart: always
+    volumes:
+      - ./config/config.json:/etc/sing-box/config.json
+      - /opt/ssl:/opt/ssl:ro
+    command: -D /var/lib/sing-box -C /etc/sing-box/ run
+    network_mode: host
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
