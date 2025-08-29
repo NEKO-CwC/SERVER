@@ -24,7 +24,7 @@ log_step() {
 
 error_exit() {
     log_error "$1"
-    exit 1
+    return 1
 }
 
 # 安装必要的包

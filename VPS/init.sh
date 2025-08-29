@@ -27,7 +27,7 @@ log_step() {
 
 error_exit() {
     log_error "$1"
-    exit 1
+    return 1
 }
 
 # 设置 oh-my-bash 主题
