@@ -1,81 +1,66 @@
 {
   "log": {
-    "level": "info",
+    "disabled": false,
+    "level": "debug",
     "timestamp": true
   },
-  "dns": {
-    "servers": [
-      {
-        "tag": "cloudflare",
-        "address": "tls://1.1.1.1",
-        "strategy": "ipv4_only",
-        "detour": "direct"
-      }
-    ]
+  "experimental": {
+    "clash_api": {
+      "external_controller": "0.0.0.0:9090",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://github.com/Zephyruso/zashboard/releases/latest/download/dist-no-fonts.zip",
+      "external_ui_download_detour": "direct",
+      "secret": "Zrc_20050905",
+      "default_mode": "rule"
+    },
+    "cache_file": {
+      "enabled": true,
+      "store_fakeip": false
+    }
   },
   "inbounds": [
     {
       "type": "hysteria2",
       "listen": "::",
       "listen_port": 36712,
-      "up_mbps": 200,
-      "down_mbps": 200,
-      "users": [{"name": "user", "password": "PXFZLFsaa338x99I+2lplolbLPef17A0"},{"name": "NEKO", "password": "nekosaiko"}],
+      "up_mbps": 100,
+      "down_mbps": 800,
+      "users": [
+        {
+          "name": "user",
+          "password": "+oDgcKhWC6uUL/FcOfnZtcSKTixo8vQB"
+        }
+      ],
       "tls": {
         "enabled": true,
-        "server_name": "284072.xyz",
-        "key_path": "/opt/ssl/284072.xyz/private.key",
-        "certificate_path": "/opt/ssl/284072.xyz/fullchain.pem"}   
- }
+        "server_name": "sanjose.284072.xyz",
+        "key_path": "/root/ssl/private.key",
+        "certificate_path": "/root/ssl/fullchain.pem"
+      }
+    }
   ],
   "outbounds": [
     {
-      "type": "direct",
-      "tag": "direct"
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": [
+        "direct"
+      ],
+      "default": "direct"
     },
     {
-      "type": "block",
-      "tag": "block"
+      "type": "direct",
+      "tag": "direct"
     }
   ],
   "route": {
     "rules": [
       {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "direct"
-      },
-      {
-        "rule_set": "geoip-cn",
-        "outbound": "block"
+        "inbound": "hysteria2",
+        "outbound": "proxy"
       }
     ],
-    "rule_set": [
-      {
-        "type": "remote",
-        "tag": "geoip-cn",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
-      }
-    ],
-    "default_domain_resolver": "cloudflare",
+    "final": "proxy",
     "auto_detect_interface": true
-  },
-  "experimental": {
-    "cache_file": {
-      "enabled": true
-    },
-    "clash_api": {
-      "external_controller": "0.0.0.0:9090",
-      "external_ui": "yacd",
-      "external_ui_download_url": "https://github.com/haishanh/yacd/archive/gh-pages.zip",
-      "external_ui_download_detour": "direct"
-    }
   }
 }
