@@ -3,8 +3,24 @@
 readonly TARGET_REPO="https://github.com/NEKO-CwC/SERVER"
 readonly OH_MY_BASH_THEME="developer"
 
+# Ensure util.sh is available
+if [ ! -f "util.sh" ]; then
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/util.sh -o util.sh
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/util.sh -O util.sh
+    fi
+fi
+
 # Source util.sh
-source "$(dirname "$0")/util.sh"
+if [ -f "util.sh" ]; then
+    source ./util.sh
+elif [ -f "$(dirname "$0")/util.sh" ]; then
+    source "$(dirname "$0")/util.sh"
+else
+    echo "Error: util.sh not found and could not be downloaded." >&2
+    exit 1
+fi
 
 # 设置 oh-my-bash 主题
 if [[ -f "/root/.bashrc" ]]; then

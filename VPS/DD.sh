@@ -6,9 +6,9 @@ readonly SSH_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICiBMtlUZ4+l0NqxpJ/
 # Ensure util.sh is available
 if [ ! -f "util.sh" ]; then
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/util.sh -o util.sh
+        curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/util.sh -o util.sh
     elif command -v wget >/dev/null 2>&1; then
-        wget -q https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/util.sh -O util.sh
+        wget -q https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/util.sh -O util.sh
     fi
 fi
 
@@ -75,8 +75,8 @@ main() {
     
     log_info "Debian 系统前置条件配置完毕，在 5 秒后将进行重启..."
     log_info "请在重启后执行一键初始化脚本"
-    log_info "国外：curl https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/ONE_STEP_INIT.sh -o ONE_STEP_INIT.sh && bash ONE_STEP_INIT.sh && rm -f ONE_STEP_INIT.sh"
-    log_info "国内：curl https://ghproxy.com/https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/ONE_STEP_INIT.sh -o ONE_STEP_INIT.sh && bash ONE_STEP_INIT.sh && rm -f ONE_STEP_INIT.sh"
+    log_info "国外：curl https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/ONE_STEP_INIT.sh -o ONE_STEP_INIT.sh && bash ONE_STEP_INIT.sh && rm -f ONE_STEP_INIT.sh"
+    log_info "国内：curl https://ghproxy.com/https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/ONE_STEP_INIT.sh -o ONE_STEP_INIT.sh && bash ONE_STEP_INIT.sh && rm -f ONE_STEP_INIT.sh"
     sleep 5
     reboot
 }

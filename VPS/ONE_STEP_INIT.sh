@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 下载 util.sh
-curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/util.sh -o util.sh
+curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/util.sh -o util.sh
 
 # Source util.sh
 source ./util.sh
@@ -16,10 +16,10 @@ main() {
     log_info "所有依赖已满足"
 
     # 下载并执行安装脚本
-    curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/package_install.sh -o package_install.sh
+    curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/package_install.sh -o package_install.sh
     bash package_install.sh
 
-    curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/init.sh -o init.sh
+    curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/init.sh -o init.sh
     bash init.sh
 
     # 清理临时文件
