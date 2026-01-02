@@ -24,7 +24,7 @@
     ],
     "rules": [
       {
-        "domain_suffix": [  
+        "domain_suffix": [
           "284072.xyz"
         ],
         "action": "route",
@@ -32,13 +32,17 @@
       },
       {
         "ip_is_private": true,
-        "rule_set": ["karing-ruleset-cnip"],
+        "rule_set": [
+          "karing-ruleset-cnip"
+        ],
         "action": "route",
         "server": "aliyun"
       },
       {
         "ip_is_private": true,
-        "rule_set": ["karing-ruleset-cn-company"],
+        "rule_set": [
+          "karing-ruleset-cn-company"
+        ],
         "action": "route",
         "invert": true,
         "server": "cloudflare"
@@ -81,15 +85,17 @@
       }
     },
     {
-      "type": "anytls",
-      "tag": "anytls-in",
-      "server": "284072.xyz",
+      "type": "naive",
+      "tag": "naive-out",
+      "server": "la-new.284072.xyz",
       "server_port": 36713,
       "password": "nekosaiko",
+      "quic": true,
+      "quic_congestion_control": "bbr2",
       "tls": {
         "enabled": true,
-        "insecure": true,
-        "server_name": "284072.xyz"
+        "insecure": false,
+        "server_name": "la-new.284072.xyz"
       }
     },
     {
@@ -132,7 +138,9 @@
         "outbound": "direct"
       },
       {
-        "rule_set": ["karing-ruleset-local"],
+        "rule_set": [
+          "karing-ruleset-local"
+        ],
         "outbound": "block"
       },
       {
@@ -142,7 +150,11 @@
         "action": "reject"
       },
       {
-        "rule_set": ["karing-ruleset-cnip", "karing-ruleset-cn-company", "karing-ruleset-geolocation-cn"],
+        "rule_set": [
+          "karing-ruleset-cnip",
+          "karing-ruleset-cn-company",
+          "karing-ruleset-geolocation-cn"
+        ],
         "outbound": "direct"
       },
       {
@@ -152,14 +164,18 @@
         "outbound": "direct"
       },
       {
-        "ip_cidr": [  
+        "ip_cidr": [
           "45.62.114.159/32",
           "47.79.145.31/32"
         ],
         "outbound": "direct"
       },
       {
-        "rule_set": ["karing-ruleset-telegram", "karing-ruleset-proxy-common", "karing-ruleset-full-gfw"],
+        "rule_set": [
+          "karing-ruleset-telegram",
+          "karing-ruleset-proxy-common",
+          "karing-ruleset-full-gfw"
+        ],
         "outbound": "select"
       }
     ],

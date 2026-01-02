@@ -3,49 +3,28 @@
 readonly ROOT_PASSWORD="Zrc_20050905"
 readonly SSH_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICiBMtlUZ4+l0NqxpJ/FvNqP5CaQNN3mZeWzoB0PGGFH"
 
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[0;33m'
-readonly RED='\033[0;31m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
+# Ensure util.sh is available
+if [ ! -f "util.sh" ]; then
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/util.sh -o util.sh
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q https://raw.githubusercontent.com/NEKO-CwC/SERVER/refs/heads/main/VPS/util.sh -O util.sh
+    fi
+fi
 
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1" >&2
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1" >&2
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
-}
-
-log_step() {
-    echo -e "${BLUE}[STEP]${NC} $1" >&2
-}
-
-error_exit() {
-    log_error "$1"
-    return 1
-}
+if [ -f "util.sh" ]; then
+    source ./util.sh
+else
+    # Fallback minimal logging if util.sh cannot be downloaded
+    readonly RED='\033[0;31m'
+    readonly NC='\033[0m'
+    log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+    log_error "Failed to download util.sh. Please install curl or wget."
+    exit 1
+fi
 
 # 检查依赖
-check_dependencies() {
-    local missing_dependencies=()
-
-    for dep in curl wget; do
-        if ! command -v "$dep" &>/dev/null; then
-            missing_dependencies+=("$dep")
-        fi
-    done
-
-    if [[ ${#missing_dependencies[@]} -ne 0 ]]; then
-        log_error "缺少以下依赖: ${missing_dependencies[*]}"
-        log_info "请安装缺少的依赖后重试"
-        return 1
-    fi
-}
+check_dependencies curl wget || exit 1
 # 获取reinstall.sh下载链接
 get_reinstall_url() {
     if detect_china_network; then

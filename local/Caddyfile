@@ -1,0 +1,7 @@
+neko-dashboard.com {
+    # 反向代理 /uptime/* 到本地的 3001 端口
+    reverse_proxy /uptime/* localhost:3001
+
+    # 反向代理 /mihomo/ui/* 到本地的 9090 端口
+    reverse_proxy /mihomo/ui/* localhost:9090
+}

@@ -25,9 +25,22 @@ log-level: info
 profile:
     store-selected: true
 
-external-controller: "0.0.0.0:9090"
+mixed-port: 7890
+external-controller: 0.0.0.0:9090
 external-ui: ui
 external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
+
+tun:
+  enable: true
+  stack: mixed
+  dns-hijack:
+    - "any:53"
+    - "tcp://any:53"
+  auto-route: true
+  auto-redirect: true
+  auto-detect-interface: true
+
+ipv6: false
   
 dns:
   enable: true

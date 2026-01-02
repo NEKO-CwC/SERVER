@@ -1,0 +1,18 @@
+services:
+  clash: 
+    container_name: clash-meta
+    image: docker.1ms.run/metacubex/mihomo
+    restart: always
+    pid: host
+    ipc: host
+    network_mode: host
+    cap_add:
+      - ALL
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - /home/neko/Project/clash:/root/.config/mihomo
+      - /dev/net/tun:/dev/net/tun
+      # 共享host的时间环境
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
