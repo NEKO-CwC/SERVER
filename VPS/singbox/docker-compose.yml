@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   sing-box:
-    image: ghcr.io/sagernet/sing-box:v1.12.0-beta.35
+    image: ghcr.io/sagernet/sing-box:latest
     container_name: sing-box-server
     restart: always
     volumes:
