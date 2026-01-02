@@ -11,7 +11,7 @@ main() {
     log_step "检查系统依赖..."
     
     # Check dependencies using the function from util.sh
-    check_dependencies curl git wget bash sudo || return 1
+    check_dependencies curl wget bash sudo || return 1
 
     log_info "所有依赖已满足"
 
