@@ -1,245 +1,402 @@
 {
   "log": {
-    "disabled": false,
-    "level": "debug",
-    "timestamp": true
+    "level": "info"
   },
   "dns": {
     "servers": [
       {
-        "type": "h3",
-        "tag": "cloudflare",
-        "server": "1.1.1.1",
-        "detour": "select"
+        "type": "udp",
+        "tag": "ali-dns",
+        "server": "223.5.5.5",
+        "server_port": 53
       },
       {
-        "type": "h3",
-        "tag": "aliyun",
-        "server": "223.5.5.5"
+        "type": "https",
+        "tag": "cf-dns",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query",
+        "detour": "默认",
+        "tls": {
+          "enabled": true,
+          "server_name": "cloudflare-dns.com"
+        }
       },
       {
         "type": "local",
-        "tag": "local"
+        "tag": "dns-local"
       }
     ],
     "rules": [
       {
-        "domain_suffix": [
-          "284072.xyz"
-        ],
-        "action": "route",
-        "server": "aliyun"
+        "domain": "sub2api.284072.xyz",
+        "server": "ali-dns"
       },
       {
-        "ip_is_private": true,
-        "rule_set": [
-          "karing-ruleset-cnip"
-        ],
-        "action": "route",
-        "server": "aliyun"
+        "rule_set": "geosite-geolocation-cn",
+        "server": "ali-dns"
       },
       {
-        "ip_is_private": true,
-        "rule_set": [
-          "karing-ruleset-cn-company"
+        "type": "logical",
+        "mode": "and",
+        "rules": [
+          {
+            "rule_set": "geoip-cn"
+          },
+          {
+            "rule_set": "geosite-geolocation-!cn",
+            "invert": true
+          }
         ],
-        "action": "route",
-        "invert": true,
-        "server": "cloudflare"
+        "server": "ali-dns"
+      },
+      {
+        "rule_set": "ai-chat",
+        "server": "cf-dns"
       }
     ],
+    "final": "cf-dns",
     "strategy": "ipv4_only"
   },
   "inbounds": [
     {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    },
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7891
+    },
+    {
+      "type": "http",
+      "tag": "http-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7892
+    },
+    {
       "type": "tun",
       "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30"
-      ],
-      "mtu": 9000,
+      "interface_name": "singbox",
+      "mtu": 1500,
+      "address": "172.19.0.1/30",
       "auto_route": true,
-      "strict_route": true
+      "strict_route": true,
+      "stack": "mixed"
     }
   ],
   "outbounds": [
     {
-      "type": "selector",
-      "tag": "select",
-      "outbounds": [
-        "proxy-jp",
-        "proxy",
-        "anytls-in"
-      ]
+      "type": "direct",
+      "tag": "直连"
+    },
+    {
+      "type": "block",
+      "tag": "拦截"
     },
     {
       "type": "hysteria2",
-      "tag": "proxy",
-      "server": "284072.xyz",
-      "server_port": 36712,
-      "password": "nekosaiko",
-      "tls": {
-        "enabled": true,
-        "insecure": true,
-        "server_name": "284072.xyz"
-      }
-    },
-    {
-      "type": "naive",
-      "tag": "naive-out",
-      "server": "la-new.284072.xyz",
-      "server_port": 36713,
-      "password": "nekosaiko",
-      "quic": true,
-      "quic_congestion_control": "bbr2",
-      "tls": {
-        "enabled": true,
-        "insecure": false,
-        "server_name": "la-new.284072.xyz"
-      }
-    },
-    {
-      "type": "hysteria2",
-      "tag": "proxy-jp",
+      "tag": "[neko] MeowBot in JP",
+      "domain_resolver": "ali-dns",
       "server": "jp.284072.xyz",
       "server_port": 36712,
       "password": "nekosaiko",
       "tls": {
         "enabled": true,
-        "insecure": true,
         "server_name": "jp.284072.xyz"
       }
     },
     {
-      "type": "direct",
-      "tag": "direct"
+      "type": "hysteria2",
+      "tag": "[neko] MeowBot in SanJose",
+      "domain_resolver": "ali-dns",
+      "server": "sanjose.284072.xyz",
+      "server_port": 36712,
+      "password": "+oDgcKhWC6uUL/FcOfnZtcSKTixo8vQB",
+      "tls": {
+        "enabled": true,
+        "server_name": "sanjose.284072.xyz"
+      }
     },
     {
-      "type": "block",
-      "tag": "block"
+      "type": "hysteria2",
+      "tag": "[neko] MeowBot in Singapore",
+      "domain_resolver": "ali-dns",
+      "server": "sgp.284072.xyz",
+      "server_port": 36712,
+      "password": "+oDgcKhWC6uUL/FcOfnZtcSKTixo8vQB",
+      "tls": {
+        "enabled": true,
+        "server_name": "sgp.284072.xyz"
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "[neko] mmx-us-anytls",
+      "server": "173.242.119.194",
+      "server_port": 443,
+      "tls": {
+        "enabled": true,
+        "server_name": "s3.ahog.es"
+      },
+      "password": "UkkCKtVJgeaFyZemNLAxMKpRmuBVfjmWiYopzPvQ7x8Yxk3XsghDqAuHLcJxbCU2rX49JdXaYxnwsFDPts6pUwDe8wgX4p7vgnRf"
+    },
+    {
+      "type": "anytls",
+      "tag": "[neko] Meow Bot in LA anytls",
+      "domain_resolver": "ali-dns",
+      "server": "la-new.284072.xyz",
+      "server_port": 80,
+      "tls": {
+        "enabled": true,
+        "server_name": "la-new.284072.xyz",
+        "alpn": "h2"
+      },
+      "password": "9b093756-6699-4d2a-8eb0-60c273b45add"
+    },
+    {
+      "type": "anytls",
+      "tag": "[neko] Meow Bot in LA anytls-dynamic",
+      "domain_resolver": "ali-dns",
+      "server": "la-new.284072.xyz",
+      "server_port": 8443,
+      "tls": {
+        "enabled": true,
+        "server_name": "la-new.284072.xyz",
+        "alpn": "h2"
+      },
+      "password": "xzb5NDZ!adf*mud5cxj"
+    },
+    {
+      "type": "socks",
+      "tag": "[neko-proxy-dialer] lajiao",
+      "domain_resolver": "ali-dns",
+      "server": "us.lajiaohttp.net",
+      "server_port": 2000,
+      "version": "5",
+      "username": "wdu8c7291-region-US-st-Wyoming-sid-QrNUWm7h-t-120",
+      "password": "3ksrya1x"
+    },
+    {
+      "type": "anytls",
+      "tag": "[neko] Meow Bot in LA anytls-lajiao dynamic resident",
+      "detour": "[neko-proxy-dialer] lajiao",
+      "domain_resolver": "ali-dns",
+      "server": "la-new.284072.xyz",
+      "server_port": 8443,
+      "tls": {
+        "enabled": true,
+        "server_name": "la-new.284072.xyz",
+        "alpn": "h2"
+      },
+      "password": "xzb5NDZ!adf*mud5cxj"
+    },
+    {
+      "type": "selector",
+      "tag": "全部节点",
+      "outbounds": [
+        "[neko] MeowBot in JP",
+        "[neko] MeowBot in SanJose",
+        "[neko] MeowBot in Singapore",
+        "[neko] mmx-us-anytls",
+        "[neko] Meow Bot in LA anytls",
+        "[neko] Meow Bot in LA anytls-dynamic",
+        "[neko] Meow Bot in LA anytls-lajiao dynamic resident"
+      ],
+      "default": "[neko] Meow Bot in LA anytls"
+    },
+    {
+      "type": "urltest",
+      "tag": "自动选择",
+      "outbounds": [
+        "[neko] MeowBot in JP",
+        "[neko] MeowBot in SanJose",
+        "[neko] MeowBot in Singapore",
+        "[neko] Meow Bot in LA anytls",
+        "[neko] Meow Bot in LA anytls-dynamic",
+        "[neko] Meow Bot in LA anytls-lajiao dynamic resident"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "5m0s",
+      "tolerance": 10
+    },
+    {
+      "type": "selector",
+      "tag": "默认",
+      "outbounds": [
+        "自动选择",
+        "直连",
+        "全部节点",
+        "[neko] Meow Bot in LA anytls-lajiao dynamic resident"
+      ],
+      "default": "全部节点"
+    },
+    {
+      "type": "selector",
+      "tag": "AI",
+      "outbounds": [
+        "默认",
+        "自动选择",
+        "直连",
+        "全部节点",
+        "[neko] Meow Bot in LA anytls-lajiao dynamic resident"
+      ],
+      "default": "默认"
+    },
+    {
+      "type": "selector",
+      "tag": "其他",
+      "outbounds": [
+        "默认",
+        "自动选择",
+        "直连",
+        "全部节点",
+        "[neko] Meow Bot in LA anytls-lajiao dynamic resident"
+      ],
+      "default": "默认"
     }
   ],
   "route": {
-    "default_domain_resolver": "aliyun",
     "rules": [
       {
         "action": "sniff"
       },
       {
-        "protocol": "dns",
-        "action": "hijack-dns"
+        "domain": "sub2api.284072.xyz",
+        "outbound": "直连"
       },
       {
-        "protocol": "quic",
-        "action": "reject"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "direct"
-      },
-      {
-        "rule_set": [
-          "karing-ruleset-local"
-        ],
-        "outbound": "block"
-      },
-      {
-        "domain_suffix": [
-          "u3.ucweb.com"
-        ],
-        "action": "reject"
-      },
-      {
-        "rule_set": [
-          "karing-ruleset-cnip",
-          "karing-ruleset-cn-company",
-          "karing-ruleset-geolocation-cn"
-        ],
-        "outbound": "direct"
-      },
-      {
-        "domain_suffix": [
-          "284072.xyz"
-        ],
-        "outbound": "direct"
+        "domain_suffix": "sub2api.284072.xyz",
+        "outbound": "直连"
       },
       {
         "ip_cidr": [
-          "45.62.114.159/32",
-          "47.79.145.31/32"
+          "104.224.154.181/32",
+          "47.79.145.31/32",
+          "104.168.88.140/32",
+          "152.42.245.67/32"
         ],
-        "outbound": "direct"
+        "outbound": "直连"
       },
       {
-        "rule_set": [
-          "karing-ruleset-telegram",
-          "karing-ruleset-proxy-common",
-          "karing-ruleset-full-gfw"
+        "domain_suffix": [
+          "neko-dashboard.com",
+          "284072.xyz",
+          "neko-cwc.com",
+          "220181.xyz",
+          "agugu.top"
         ],
-        "outbound": "select"
+        "outbound": "直连"
+      },
+      {
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "protocol": "dns"
+          },
+          {
+            "port": 53
+          }
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "rule_set": "geoip-private",
+        "outbound": "直连"
+      },
+      {
+        "rule_set": "geosite-geolocation-cn",
+        "outbound": "直连"
+      },
+      {
+        "type": "logical",
+        "mode": "and",
+        "rules": [
+          {
+            "rule_set": "geoip-cn"
+          },
+          {
+            "rule_set": "geosite-geolocation-!cn",
+            "invert": true
+          }
+        ],
+        "outbound": "直连"
+      },
+      {
+        "rule_set": "ai-chat",
+        "outbound": "AI"
       }
     ],
     "rule_set": [
       {
-        "type": "remote",
-        "tag": "karing-ruleset-cnip",
-        "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ChinaIp.srs",
-        "download_detour": "proxy"
+        "type": "inline",
+        "tag": "geoip-private",
+        "rules": [
+          {
+            "ip_cidr": [
+              "10.0.0.0/8",
+              "172.16.0.0/12",
+              "192.168.0.0/16",
+              "127.0.0.0/8",
+              "169.254.0.0/16",
+              "::1/128",
+              "fc00::/7",
+              "fe80::/10"
+            ]
+          }
+        ]
       },
       {
         "type": "remote",
-        "tag": "karing-ruleset-cn-company",
+        "tag": "geosite-geolocation-cn",
         "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ChinaCompanyIp.srs",
-        "download_detour": "proxy"
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs",
+        "download_detour": "默认",
+        "update_interval": "24h"
       },
       {
         "type": "remote",
-        "tag": "karing-ruleset-telegram",
+        "tag": "geosite-geolocation-!cn",
         "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/Telegram.srs",
-        "download_detour": "proxy"
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs",
+        "download_detour": "默认",
+        "update_interval": "24h"
       },
       {
         "type": "remote",
-        "tag": "karing-ruleset-proxy-common",
+        "tag": "geoip-cn",
         "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ProxyLite.srs",
-        "download_detour": "proxy"
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "download_detour": "默认",
+        "update_interval": "24h"
       },
       {
         "type": "remote",
-        "tag": "karing-ruleset-local",
+        "tag": "ai-chat",
         "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/LocalAreaNetwork.srs",
-        "download_detour": "proxy"
-      },
-      {
-        "type": "remote",
-        "tag": "karing-ruleset-full-gfw",
-        "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/ACL4SSR/ProxyGFWlist.srs",
-        "download_detour": "proxy"
-      },
-      {
-        "type": "remote",
-        "tag": "karing-ruleset-geolocation-cn",
-        "format": "binary",
-        "url": "https://github.com/KaringX/karing-ruleset/raw/refs/heads/sing/geo/geosite/geolocation-cn.srs",
-        "download_detour": "proxy"
+        "url": "https://ghfast.top/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ai-chat-!cn.srs",
+        "download_detour": "直连",
+        "update_interval": "24h"
       }
-    ]
+    ],
+    "final": "其他",
+    "auto_detect_interface": true,
+    "default_domain_resolver": "ali-dns"
   },
   "experimental": {
     "cache_file": {
       "enabled": true,
-      "store_fakeip": true,
-      "store_rdrc": true
+      "path": "cache.db"
     },
     "clash_api": {
       "external_controller": "127.0.0.1:9090",
-      "secret": "nekosaiko"
+      "external_ui": "ui",
+      "external_ui_download_url": "https://ghfast.top/https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
+      "external_ui_download_detour": "直连"
     }
   }
 }
