@@ -1,7 +1,6 @@
 #!/bin/bash
 
 readonly TARGET_REPO="https://github.com/NEKO-CwC/SERVER"
-readonly OH_MY_BASH_THEME="developer"
 
 # Ensure util.sh is available
 if [ ! -f "util.sh" ]; then
@@ -20,12 +19,6 @@ elif [ -f "$(dirname "$0")/util.sh" ]; then
 else
     echo "Error: util.sh not found and could not be downloaded." >&2
     exit 1
-fi
-
-# 设置 oh-my-bash 主题
-if [[ -f "/root/.bashrc" ]]; then
-    sed -i 's/OSH_THEME=".*"/OSH_THEME="'${OH_MY_BASH_THEME}'"/' /root/.bashrc
-    log_info "oh-my-bash 主题设置为: ${OH_MY_BASH_THEME}"
 fi
 
 # 克隆目标仓库
@@ -97,14 +90,12 @@ cat > /etc/motd << 'MOTD_EOF'
 
 MOTD_EOF
 
-# Docker 启动 singbox substore 镜像
-log_info "启动 singbox 镜像..."
+# Docker 启动 sing-box 和 sub-store 镜像
+log_info "启动 sing-box 容器..."
 
-cd /root
-mkdir -p /root/.singbox
-cd /root/.singbox
-touch docker-compose.yml
-cat >> docker-compose.yml << EOF
+mkdir -p /root/.singbox/config
+cp /root/SERVER/VPS/singbox/server_config/config.json /root/.singbox/config/config.json
+cat > /root/.singbox/docker-compose.yml << EOF
 services:
   sing-box:
     image: ghcr.io/sagernet/sing-box:latest
@@ -115,10 +106,16 @@ services:
     command: -D /var/lib/sing-box -C /etc/sing-box/ run
     network_mode: host
 EOF
-docker-compose up 
 
-log_info "启动 substore 容器..."
-cd /root
+cd /root/.singbox
+docker compose up -d
+
+log_info "启动 sub-store 容器..."
 mkdir -p /root/.substore
-cd .substore
-docker run -it -d --restart=always -e "SUB_STORE_CRON=0 0 * * *" -e SUB_STORE_FRONTEND_BACKEND_PATH=/sub -p 3001:3001 -v /root/.substore:/opt/app/data --name sub-store xream/sub-store
+docker run -d --restart=always \
+    -e "SUB_STORE_CRON=0 0 * * *" \
+    -e SUB_STORE_FRONTEND_BACKEND_PATH=/sub \
+    -p 3001:3001 \
+    -v /root/.substore:/opt/app/data \
+    --name sub-store \
+    xream/sub-store

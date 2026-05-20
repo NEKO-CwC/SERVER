@@ -11,7 +11,7 @@ main() {
     log_step "检查系统依赖..."
     
     # Check dependencies using the function from util.sh
-    check_dependencies curl wget bash sudo || return 1
+    check_dependencies curl bash || return 1
 
     log_info "所有依赖已满足"
 
@@ -19,11 +19,14 @@ main() {
     curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/package_install.sh -o package_install.sh
     bash package_install.sh
 
+    curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/os_setting.sh -o os_setting.sh
+    bash os_setting.sh
+
     curl -fsSL https://raw.githubusercontent.com/NEKO-CwC/SERVER/main/VPS/init.sh -o init.sh
     bash init.sh
 
     # 清理临时文件
-    rm -f package_install.sh init.sh util.sh
+    rm -f package_install.sh os_setting.sh init.sh util.sh
     log_info "一键初始化脚本执行完成"
 }
 
