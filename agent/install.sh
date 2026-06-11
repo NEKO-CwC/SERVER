@@ -151,13 +151,22 @@ write_bash_aliases() {
   local bashrc="${HOME:-/root}/.bashrc"
   touch "$bashrc"
 
-  sed -i -E '/^[[:space:]]*alias[[:space:]]+(cc|cx)=/d' "$bashrc"
+  sed -i -E \
+    -e '/^# >>> neko agent aliases >>>$/,/^# <<< neko agent aliases <<<$/d' \
+    -e '/^[[:space:]]*alias[[:space:]]+(cc|cx)=/d' \
+    "$bashrc"
   {
+    printf "%s\n" "# >>> neko agent aliases >>>"
+    printf "%s\n" 'case ":$PATH:" in'
+    printf "%s\n" '  *":${HOME:-/root}/.local/bin:"*) ;;'
+    printf "%s\n" '  *) export PATH="${HOME:-/root}/.local/bin:$PATH" ;;'
+    printf "%s\n" 'esac'
     printf "%s\n" "alias cc='IS_SANDBOX=1 claude --dangerously-skip-permissions'"
     printf "%s\n" "alias cx='codex --yolo'"
+    printf "%s\n" "# <<< neko agent aliases <<<"
   } >> "$bashrc"
 
-  log_info "已写入 $bashrc"
+  log_info "已写入 $bashrc，并确保 ~/.local/bin 在 PATH 中"
 }
 
 main() {
