@@ -102,6 +102,7 @@ set -euo pipefail
 
 MARK_ID="0x100"
 TABLE_NAME="singbox_bypass"
+SSH_PORT="22"
 NAPCAT_IP="10.42.0.143"
 K8S_POD_CIDR="10.42.0.0/16"
 K8S_SVC_CIDR="10.43.0.0/16"
@@ -120,39 +121,47 @@ is_virtual_iface() {
 }
 
 detect_public_iface() {
+  local line
   local candidate
 
-  while read -r candidate; do
-    if [[ -n "${candidate}" ]] && ! is_virtual_iface "${candidate}"; then
+  while read -r line; do
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" == *" linkdown"* ]] && continue
+
+    candidate="$(
+      awk '{
+        for (i = 1; i <= NF; i++) {
+          if ($i == "dev") {
+            print $(i + 1);
+            exit;
+          }
+        }
+      }' <<<"${line}"
+    )"
+
+    if [[ -n "${candidate}" ]] &&
+       ! is_virtual_iface "${candidate}" &&
+       ip -o link show dev "${candidate}" 2>/dev/null | grep -q 'LOWER_UP'; then
       printf '%s\n' "${candidate}"
       return 0
     fi
-  done < <(
-    ip -4 route show default table main 2>/dev/null |
-      awk '{
-        dev = "";
-        metric = 0;
-        for (i = 1; i <= NF; i++) {
-          if ($i == "dev") dev = $(i + 1);
-          if ($i == "metric") metric = $(i + 1);
-        }
-        if (dev != "") print metric, dev;
-      }' |
-      sort -n |
-      awk '{print $2}'
-  )
+  done < <(ip -4 route show default table main 2>/dev/null)
 
   candidate="$(
     ip -4 route get 1.1.1.1 2>/dev/null |
       awk '{for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}'
   )"
-  if [[ -n "${candidate}" ]] && ! is_virtual_iface "${candidate}"; then
+  if [[ -n "${candidate}" ]] &&
+     ! is_virtual_iface "${candidate}" &&
+     ip -o link show dev "${candidate}" 2>/dev/null | grep -q 'LOWER_UP'; then
     printf '%s\n' "${candidate}"
     return 0
   fi
 
   while read -r candidate; do
-    if [[ -n "${candidate}" ]] && ! is_virtual_iface "${candidate}"; then
+    if [[ -n "${candidate}" ]] &&
+       ! is_virtual_iface "${candidate}" &&
+       ip -o link show dev "${candidate}" 2>/dev/null | grep -q 'LOWER_UP'; then
       printf '%s\n' "${candidate}"
       return 0
     fi
@@ -164,48 +173,79 @@ detect_public_iface() {
   return 1
 }
 
-IFACE_PUBLIC="${IFACE_PUBLIC:-$(detect_public_iface || true)}"
-if [[ -z "${IFACE_PUBLIC}" ]]; then
-  echo "Error: failed to detect public network interface." >&2
-  exit 1
-fi
-
-INTERNAL_IP="$(
-  ip -4 addr show dev "${IFACE_PUBLIC}" scope global 2>/dev/null |
-    awk '/inet / {sub(/\/.*/, "", $2); print $2; exit}'
-)"
-if [[ -z "${INTERNAL_IP}" ]]; then
-  echo "Error: failed to find IPv4 address on ${IFACE_PUBLIC}." >&2
-  exit 1
-fi
-
-echo "Detected public interface: ${IFACE_PUBLIC} (${INTERNAL_IP})"
-echo "Configuring sing-box bypass routing rules..."
-
-nft "delete table inet ${TABLE_NAME}" 2>/dev/null || true
-nft "add table inet ${TABLE_NAME}"
-nft "add chain inet ${TABLE_NAME} prerouting { type filter hook prerouting priority -150; policy accept; }"
-nft "add chain inet ${TABLE_NAME} napcat_bypass { type filter hook prerouting priority dstnat - 2; policy accept; }"
-nft "add rule inet ${TABLE_NAME} napcat_bypass ip saddr ${NAPCAT_IP} ct mark set 0x00002024 meta mark set 0x00002024 counter"
-nft "add rule inet ${TABLE_NAME} prerouting iifname \"${IFACE_PUBLIC}\" fib daddr type local ct state new ct mark set ${MARK_ID} counter"
-nft "add rule inet ${TABLE_NAME} prerouting iifname != \"${IFACE_PUBLIC}\" ct mark ${MARK_ID} meta mark set ct mark counter"
-
-ensure_rule() {
-  local pattern="$1"
-  shift
-  if ! ip rule show | grep -Fq "${pattern}"; then
-    ip rule add "$@"
-  fi
+delete_rule_pref() {
+  local pref="$1"
+  while ip rule show | grep -Fq "${pref}:"; do
+    ip rule del pref "${pref}"
+  done
 }
 
-ensure_rule "fwmark ${MARK_ID}" fwmark "${MARK_ID}" pref 5000 lookup main
-ensure_rule "from ${NAPCAT_IP}" from "${NAPCAT_IP}" pref 3999 lookup main
-ensure_rule "to ${K8S_POD_CIDR}" to "${K8S_POD_CIDR}" pref 4000 lookup main
-ensure_rule "to ${K8S_SVC_CIDR}" to "${K8S_SVC_CIDR}" pref 4001 lookup main
-ensure_rule "to ${LAN_CIDR}" to "${LAN_CIDR}" pref 4003 lookup main
-ensure_rule "to ${TAILSCALE_CIDR}" to "${TAILSCALE_CIDR}" pref 4004 lookup main
+cleanup() {
+  nft "delete table inet ${TABLE_NAME}" 2>/dev/null || true
 
-echo "sing-box bypass routing rules configured."
+  delete_rule_pref 3999
+  delete_rule_pref 4000
+  delete_rule_pref 4001
+  delete_rule_pref 4003
+  delete_rule_pref 4004
+  delete_rule_pref 5000
+}
+
+apply() {
+  local iface_public
+  local internal_ip
+
+  iface_public="${IFACE_PUBLIC:-$(detect_public_iface || true)}"
+  if [[ -z "${iface_public}" ]]; then
+    echo "Error: failed to detect public network interface." >&2
+    exit 1
+  fi
+
+  internal_ip="$(
+    ip -4 addr show dev "${iface_public}" scope global 2>/dev/null |
+      awk '/inet / {sub(/\/.*/, "", $2); print $2; exit}'
+  )"
+  if [[ -z "${internal_ip}" ]]; then
+    echo "Error: failed to find IPv4 address on ${iface_public}." >&2
+    exit 1
+  fi
+
+  echo "Detected public interface: ${iface_public} (${internal_ip})"
+  echo "Configuring sing-box bypass routing rules..."
+
+  cleanup
+
+  nft "add table inet ${TABLE_NAME}"
+  nft "add chain inet ${TABLE_NAME} prerouting { type filter hook prerouting priority mangle; policy accept; }"
+  nft "add chain inet ${TABLE_NAME} output { type route hook output priority mangle; policy accept; }"
+  nft "add rule inet ${TABLE_NAME} prerouting ip saddr ${NAPCAT_IP} ct mark set 0x00002024 meta mark set 0x00002024 counter"
+  nft "add rule inet ${TABLE_NAME} prerouting iifname \"${iface_public}\" meta l4proto tcp tcp dport ${SSH_PORT} ct state new ct mark set ${MARK_ID} meta mark set ${MARK_ID} counter"
+  nft "add rule inet ${TABLE_NAME} output ct mark ${MARK_ID} meta mark set ct mark counter"
+  nft "add rule inet ${TABLE_NAME} output meta l4proto tcp tcp sport ${SSH_PORT} meta mark set ${MARK_ID} counter"
+  nft "add rule inet ${TABLE_NAME} output meta l4proto tcp tcp dport ${SSH_PORT} meta mark set ${MARK_ID} counter"
+
+  ip rule add fwmark "${MARK_ID}" pref 5000 lookup main
+  ip rule add from "${NAPCAT_IP}" pref 3999 lookup main
+  ip rule add to "${K8S_POD_CIDR}" pref 4000 lookup main
+  ip rule add to "${K8S_SVC_CIDR}" pref 4001 lookup main
+  ip rule add to "${LAN_CIDR}" pref 4003 lookup main
+  ip rule add to "${TAILSCALE_CIDR}" pref 4004 lookup main
+
+  echo "sing-box bypass routing rules configured."
+}
+
+case "${1:-apply}" in
+  apply)
+    apply
+    ;;
+  cleanup)
+    cleanup
+    ;;
+  *)
+    echo "Usage: $0 [apply|cleanup]" >&2
+    exit 1
+    ;;
+esac
 BYPASS
 
   chmod 0755 "${BYPASS_SCRIPT}"
@@ -221,7 +261,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/etc/sing-box/bypass.sh
+ExecStart=/etc/sing-box/bypass.sh apply
+ExecReload=/etc/sing-box/bypass.sh apply
 RemainAfterExit=yes
 
 [Install]
@@ -233,16 +274,17 @@ UNIT
 [Unit]
 Description=sing-box Service
 Documentation=https://sing-box.sagernet.org
-After=network-online.target nss-lookup.target bypass.service
-Wants=network-online.target
-Requires=bypass.service
+After=network-online.target nss-lookup.target
+Wants=network-online.target bypass.service
 
 [Service]
 Type=simple
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+ExecStartPre=/etc/sing-box/bypass.sh apply
 ExecStartPre=/usr/local/bin/sing-box check -c /etc/sing-box/config.json
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
+ExecReload=/etc/sing-box/bypass.sh apply
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10

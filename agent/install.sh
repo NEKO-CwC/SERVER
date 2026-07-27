@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Linux agent installer: cc-switch + WebDAV + Claude Code + Codex.
+# Linux agent installer: cc-switch + WebDAV/SQL config + Claude Code + Codex.
 
-PROXY_URL="http://la-new.284072.xyz:20081"
+PROXY_URL=""
+SQL_FILE=""
 WEBDAV_BASE_URL="https://openlist.neko-dashboard.com:8443/dav"
 WEBDAV_REMOTE_ROOT="cc-switch-sync"
 WEBDAV_PROFILE="default"
@@ -20,6 +21,51 @@ log_info() {
 
 log_error() {
   printf '\033[1;31m[ERROR] %s\033[0m\n' "$*" >&2
+}
+
+print_usage() {
+  cat <<'EOF'
+Usage: install.sh [--sql-file FILE]
+
+Options:
+  --sql-file FILE  Import cc-switch config from a local SQL file and skip WebDAV.
+  -h, --help       Show this help message.
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --sql-file)
+        if [[ $# -lt 2 || -z "$2" ]]; then
+          log_error "--sql-file 需要指定 SQL 文件"
+          return 2
+        fi
+        SQL_FILE="$2"
+        shift 2
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      *)
+        log_error "未知参数: $1"
+        print_usage >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [[ -n "$SQL_FILE" ]]; then
+    if [[ ! -f "$SQL_FILE" ]]; then
+      log_error "SQL 文件不存在: $SQL_FILE"
+      return 2
+    fi
+    if [[ ! -r "$SQL_FILE" ]]; then
+      log_error "SQL 文件不可读: $SQL_FILE"
+      return 2
+    fi
+  fi
 }
 
 check_root() {
@@ -111,6 +157,16 @@ configure_webdav() {
   fi
 }
 
+import_sql_config() {
+  log_step "从 SQL 文件导入 cc-switch 配置"
+  log_info "SQL file: $SQL_FILE"
+
+  if ! cc-switch config import "$SQL_FILE"; then
+    log_error "SQL 配置导入失败"
+    return 1
+  fi
+}
+
 install_claude() {
   log_step "安装 Claude Code"
 
@@ -172,12 +228,17 @@ write_bash_aliases() {
 main() {
   log_step "Linux Agent 安装"
 
+  parse_args "$@"
   check_root
   check_linux
   check_commands
   prepare_process_env
   install_cc_switch
-  configure_webdav
+  if [[ -n "$SQL_FILE" ]]; then
+    import_sql_config
+  else
+    configure_webdav
+  fi
   install_claude
   install_codex
   write_bash_aliases
