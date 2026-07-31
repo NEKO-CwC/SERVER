@@ -5,6 +5,8 @@ set -euo pipefail
 
 CC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+export PATH="/root/.local/bin:${HOME:-/root}/.local/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
 log_warn() {
   printf '[cc] WARN: %s\n' "$*" >&2
 }
@@ -61,6 +63,8 @@ except Exception:
 
 find_claude() {
   local candidates=(
+    "/root/.local/bin/claude"
+    "${HOME:-/root}/.local/bin/claude"
     "/usr/local/bin/claude"
     "/usr/bin/claude"
     "/bin/claude"

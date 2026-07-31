@@ -7,9 +7,35 @@ HOSTS_FILE="${AGENT_HOSTS_FILE:-/etc/hosts}"
 MARKER="# neko-agent-api-rescue-v1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+export PATH="/root/.local/bin:${HOME:-/root}/.local/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
 cleanup() {
   sed -i "\|${MARKER}$|d" "${HOSTS_FILE}" 2>/dev/null ||
     printf '[rescue-v1] WARN: failed to clean %s\n' "${HOSTS_FILE}" >&2
+}
+
+find_binary() {
+  local name="$1"
+  local candidate
+
+  if command -v "${name}" >/dev/null 2>&1; then
+    command -v "${name}"
+    return 0
+  fi
+
+  for candidate in \
+    "/root/.local/bin/${name}" \
+    "${HOME:-/root}/.local/bin/${name}" \
+    "/usr/local/bin/${name}" \
+    "/usr/bin/${name}" \
+    "/bin/${name}"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -41,8 +67,27 @@ export NO_PROXY="${NO_PROXY:+${NO_PROXY},}${API_HOST}"
 export no_proxy="${no_proxy:+${no_proxy},}${API_HOST}"
 
 if (($# == 0)); then
-  set -- bash "${SCRIPT_DIR}/cc.sh"
+  set -- claude
 fi
+
+case "$1" in
+  claude)
+    shift
+    set -- bash "${SCRIPT_DIR}/cc.sh" "$@"
+    ;;
+  codex)
+    shift
+    if ! agent_bin="$(find_binary codex)"; then
+      printf '[rescue-v1] ERROR: codex not found (checked PATH and local bin directories)\n' >&2
+      exit 1
+    fi
+    set -- "${agent_bin}" --yolo "$@"
+    ;;
+  --)
+    shift
+    (($# > 0)) || { printf '[rescue-v1] ERROR: missing command after --\n' >&2; exit 1; }
+    ;;
+esac
 
 printf '[rescue-v1] temporary host mapping active; starting: %s\n' "$*"
 "$@"
