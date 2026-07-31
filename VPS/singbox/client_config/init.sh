@@ -209,6 +209,7 @@ Description=sing-box bypass routing rules
 After=network-online.target tailscaled.service
 Wants=network-online.target
 Before=sing-box.service
+PartOf=sing-box.service
 
 [Service]
 Type=oneshot
@@ -216,9 +217,6 @@ ExecStart=/etc/sing-box/bypass.sh apply
 ExecReload=/etc/sing-box/bypass.sh apply
 ExecStop=/etc/sing-box/bypass.sh cleanup
 RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
 UNIT
 
   cat > "${TMP_DIR}/sing-box.service" <<'UNIT'
@@ -241,6 +239,7 @@ ExecStartPre=/usr/local/bin/sing-box check -c /etc/sing-box/config.json
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 ExecReload=/usr/local/bin/sing-box check -c /etc/sing-box/config.json
 ExecReload=/bin/kill -HUP $MAINPID
+ExecStopPost=/etc/sing-box/bypass.sh cleanup
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=infinity
@@ -278,19 +277,16 @@ install_files() {
 }
 
 start_services() {
-  info "Reloading systemd and enabling services..."
+  info "Reloading systemd and enabling sing-box..."
   systemctl daemon-reload
-  systemctl enable bypass.service sing-box.service
-
-  info "Applying bypass rules..."
-  if ! systemctl restart bypass.service; then
-    systemctl --no-pager status bypass.service || true
-    exit 1
+  if systemctl is-enabled --quiet bypass.service; then
+    systemctl disable bypass.service
   fi
+  systemctl enable sing-box.service
 
-  info "Starting sing-box..."
+  info "Starting sing-box and its bypass rules..."
   if ! systemctl restart sing-box.service; then
-    systemctl --no-pager status sing-box.service || true
+    systemctl --no-pager status bypass.service sing-box.service || true
     journalctl -u sing-box.service -n 50 --no-pager || true
     exit 1
   fi

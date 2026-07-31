@@ -119,8 +119,10 @@ table inet ${NFT_TABLE} {
 NFT
 
   ip -4 rule add priority "${SSH_RULE_PREF}" fwmark "${MARK_ID}" table main
-  ip -4 rule add priority "${TAILSCALE_RULE_PREF}" to "${TAILSCALE_V4_CIDR}" table "${TAILSCALE_ROUTE_TABLE}"
-  ip -6 rule add priority "${TAILSCALE_RULE_PREF}" to "${TAILSCALE_V6_CIDR}" table "${TAILSCALE_ROUTE_TABLE}"
+
+  # Match concrete Tailscale routes without letting an exit-node default capture overlapping address space.
+  ip -4 rule add priority "${TAILSCALE_RULE_PREF}" to "${TAILSCALE_V4_CIDR}" table "${TAILSCALE_ROUTE_TABLE}" suppress_prefixlength 0
+  ip -6 rule add priority "${TAILSCALE_RULE_PREF}" to "${TAILSCALE_V6_CIDR}" table "${TAILSCALE_ROUTE_TABLE}" suppress_prefixlength 0
 
   echo "Configured sing-box bypass rules for ${public_iface} (${public_ip})."
 }
