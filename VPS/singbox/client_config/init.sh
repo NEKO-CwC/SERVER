@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.13}"
-DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
+DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-http://la-new.284072.xyz:20081}"
 
 INSTALL_BIN="/usr/local/bin/sing-box"
 CONFIG_DIR="/etc/sing-box"
