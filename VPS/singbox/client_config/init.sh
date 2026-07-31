@@ -3,6 +3,7 @@ set -euo pipefail
 
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.13}"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-http://la-new.284072.xyz:20081}"
+STARTUP_STABILITY_SECONDS=5
 
 INSTALL_BIN="/usr/local/bin/sing-box"
 CONFIG_DIR="/etc/sing-box"
@@ -277,6 +278,12 @@ install_files() {
 }
 
 start_services() {
+  local elapsed
+
+  stop_failed_services() {
+    systemctl stop sing-box.service bypass.service 2>/dev/null || true
+  }
+
   info "Reloading systemd and enabling sing-box..."
   systemctl daemon-reload
   if systemctl is-enabled --quiet bypass.service; then
@@ -286,10 +293,23 @@ start_services() {
 
   info "Starting sing-box and its bypass rules..."
   if ! systemctl restart sing-box.service; then
+    stop_failed_services
     systemctl --no-pager status bypass.service sing-box.service || true
     journalctl -u sing-box.service -n 50 --no-pager || true
     exit 1
   fi
+
+  info "Checking sing-box startup stability for ${STARTUP_STABILITY_SECONDS} seconds..."
+  for ((elapsed = 1; elapsed <= STARTUP_STABILITY_SECONDS; elapsed++)); do
+    sleep 1
+    if ! systemctl is-active --quiet sing-box.service; then
+      error "sing-box stopped during startup initialization."
+      stop_failed_services
+      systemctl --no-pager status bypass.service sing-box.service || true
+      journalctl -u sing-box.service -n 50 --no-pager || true
+      exit 1
+    fi
+  done
 
   systemctl is-active --quiet bypass.service
   systemctl is-active --quiet sing-box.service
