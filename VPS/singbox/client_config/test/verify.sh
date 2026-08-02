@@ -28,7 +28,7 @@ assert_file "${CONFIG_DIR}/config.json"
 assert_file "${CONFIG_DIR}/bypass.sh"
 assert_file /etc/systemd/system/bypass.service
 assert_file /etc/systemd/system/sing-box.service
-/usr/local/bin/sing-box version | grep -F "sing-box version 1.13.13"
+/usr/local/bin/sing-box version | grep -F "sing-box version 1.13.15"
 [[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == 600 ]]
 [[ "$(stat -c '%a' "${CONFIG_DIR}/bypass.sh")" == 755 ]]
 cmp -s "${WORKSPACE}/bypass.sh" "${CONFIG_DIR}/bypass.sh"
@@ -86,7 +86,11 @@ assert_active sing-box.service
 echo "[verify] checking idempotent reinstall"
 ln -sfn /etc/systemd/system/bypass.service /etc/systemd/system/multi-user.target.wants/bypass.service
 [[ "$(systemctl is-enabled bypass.service)" == enabled ]]
-bash "${WORKSPACE}/init.sh" "${SUBSCRIPTION_URL}" >/tmp/singbox-reinstall.log
+bash "${WORKSPACE}/init.sh" "${SUBSCRIPTION_URL}" >/tmp/singbox-reinstall.log 2>&1
+if grep -Fq 'The unit files have no installation config' /tmp/singbox-reinstall.log; then
+  echo "reinstall tried to disable the static bypass unit" >&2
+  exit 1
+fi
 compgen -G "${CONFIG_DIR}/config.json.bak-*" >/dev/null
 [[ "$(systemctl is-enabled bypass.service)" == static ]]
 assert_active bypass.service

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.13}"
+SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.15}"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-http://la-new.284072.xyz:20081}"
 STARTUP_STABILITY_SECONDS=5
 
@@ -51,7 +51,7 @@ install_dependencies() {
   local missing=()
   local command_name
 
-  for command_name in curl ip nft tar gzip awk grep install mktemp; do
+  for command_name in curl ip nft tar gzip awk grep install mktemp readlink unlink; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       missing+=("${command_name}")
     fi
@@ -79,7 +79,7 @@ require_commands() {
   local missing=()
   local command_name
 
-  for command_name in curl ip nft tar gzip awk grep install mktemp systemctl; do
+  for command_name in curl ip nft tar gzip awk grep install mktemp readlink unlink systemctl; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       missing+=("${command_name}")
     fi
@@ -279,16 +279,18 @@ install_files() {
 
 start_services() {
   local elapsed
+  local legacy_bypass_link="/etc/systemd/system/multi-user.target.wants/bypass.service"
 
   stop_failed_services() {
     systemctl stop sing-box.service bypass.service 2>/dev/null || true
   }
 
   info "Reloading systemd and enabling sing-box..."
-  systemctl daemon-reload
-  if systemctl is-enabled --quiet bypass.service; then
-    systemctl disable bypass.service
+  if [[ -L "${legacy_bypass_link}" ]] &&
+     [[ "$(readlink -f -- "${legacy_bypass_link}")" == "${BYPASS_UNIT}" ]]; then
+    unlink -- "${legacy_bypass_link}"
   fi
+  systemctl daemon-reload
   systemctl enable sing-box.service
 
   info "Starting sing-box and its bypass rules..."
