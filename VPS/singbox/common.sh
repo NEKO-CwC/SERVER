@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Shared download helpers. Each role owns its binary, configuration and service.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/proxy.sh"
 
 resolve_architecture() {
   case "$(uname -m)" in
@@ -12,6 +13,7 @@ resolve_architecture() {
 download_file() {
   local output_file="$1" download_url="$2"
   shift 2
+  ensure_download_proxy || return $?
   curl --fail --silent --show-error --location \
     --retry 3 --retry-all-errors --retry-delay 2 \
     --connect-timeout 20 --max-time 180 \
@@ -30,7 +32,10 @@ stage_singbox() {
   local archive_file="${TMP_DIR}/${archive_name}"
   local extracted_bin="${TMP_DIR}/sing-box-${SINGBOX_VERSION}-linux-${architecture}/sing-box"
   local curl_options=()
-  if [[ -n "${DOWNLOAD_PROXY:-}" ]]; then curl_options+=(--proxy "$DOWNLOAD_PROXY"); fi
+  # Backward compatibility: only an otherwise unspecified env proxy may use this binary-only override.
+  if [[ "$PROXY_MODE" == env && -z "$PROXY_URL" && -n "${DOWNLOAD_PROXY:-}" ]]; then
+    curl_options+=(--proxy "$DOWNLOAD_PROXY")
+  fi
   info "Downloading sing-box ${SINGBOX_VERSION} for ${architecture}..."
   download_file "$archive_file" "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/${archive_name}" "${curl_options[@]}"
   tar -xzf "$archive_file" -C "$TMP_DIR"

@@ -11,19 +11,20 @@ Linux VPS 基础初始化、Agent 安装，以及独立的 sing-box client/serve
 | `VPS/singbox/client/install.sh` | 获取 Xboard 订阅配置，部署客户端与 SSH/Tailscale bypass |
 | `VPS/singbox/server/install.sh` | 从本地文件或远程文件地址部署服务端 |
 | `agent/api-rescue-v1.sh` | 临时 API DNS 映射，退出时清理 |
+| `with-proxy.sh` | 为 Git、VPS 初始化等命令提供交互或环境配置的临时代理 |
 
 基础初始化不会自动启动代理。Clash、sub-store 和生产节点配置不再由本仓库维护。
 
 ## 私有配置
 
-仓库不提供真实密码、订阅 token、服务器地址或证书。Agent 默认在终端交互输入，无需环境文件。需要保存参数时，可创建私有配置：
+仓库不提供真实密码、订阅 token、服务器地址或证书。Agent 与 sing-box 安装器默认在终端交互选择代理，无需环境文件。需要保存参数时，可创建私有配置：
 
 ```bash
 cp .env.example .env
 chmod 600 .env
 # 编辑 .env，填写本次需要的变量
-# Agent 通过 bash agent/install.sh --env .env 直接加载。
-# 其他脚本或 Agent 的 --env（不带文件）模式可先导出变量：
+# Agent/client/server 均通过 --env .env 直接加载。
+# 使用 --env（不带文件）模式可先导出变量：
 set -a
 source .env
 set +a
@@ -50,9 +51,9 @@ bash agent/install.sh --env /secure/agent.env # 加载指定环境文件，不�
 - `CC_SWITCH_CONFIG_SOURCE=dav`（默认）：填写 `CC_SWITCH_WEBDAV_BASE_URL`、`CC_SWITCH_WEBDAV_USERNAME`、`CC_SWITCH_WEBDAV_PASSWORD`；Remote Root 默认 `cc-switch-sync`，Profile 默认 `default`。
 - `CC_SWITCH_CONFIG_SOURCE=sql`：填写 `CC_SWITCH_SQL_FILE`，指向本地可读 SQL 文件，无需 WebDAV 凭据。
 
-环境模式下的代理由 `AGENT_PROXY_MODE` 选择：`none` 为直连；`env`（默认）使用 `AGENT_PROXY_URL`，为空时继承已设置的 HTTP/HTTPS/ALL_PROXY；`ssh` 使用 `AGENT_SSH_HOST`、`AGENT_SSH_USER`、`AGENT_SSH_PASSWORD` 建立临时隧道。两种输入方式都复用相同的代理与安装逻辑。
+环境模式下的代理由 `INSTALL_PROXY_MODE` 选择：`none` 为直连；`env`（默认）使用 `INSTALL_PROXY_URL`，为空时继承已设置的 HTTP/HTTPS/ALL_PROXY；`ssh` 使用 `INSTALL_SSH_HOST`、`INSTALL_SSH_USER`、`INSTALL_SSH_PASSWORD` 建立临时隧道。这套 `INSTALL_*` 配置由 Agent、sing-box client/server 和 `with-proxy.sh` 共同使用；旧的 `AGENT_PROXY_*` / `AGENT_SSH_*` 变量仍可使用，同名用途的非空 `INSTALL_*` 值优先。
 
-SSH 只在需要下载或 WebDAV 同步时启动，安装成功、失败或终止后关闭。默认仅用密码连接，不预先登记、不保存或校验服务器主机密钥；也可交互选择首次自动登记（`accept-new`）或严格校验（`yes`）。环境模式使用 `AGENT_SSH_HOST_KEY_CHECKING` 选择，默认 `no`。不校验时无法确认服务器身份。详细设置见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。脚本不配置远端账户、不启用 TUN，也不修改路由。
+SSH 只在需要下载或 WebDAV 同步时启动，安装成功、失败或终止后关闭。默认仅用密码连接，不预先登记、不保存或校验服务器主机密钥；也可交互选择首次自动登记（`accept-new`）或严格校验（`yes`）。环境模式使用 `INSTALL_SSH_HOST_KEY_CHECKING` 选择，默认 `no`。不校验时无法确认服务器身份。详细设置见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。脚本不配置远端账户、不启用 TUN，也不修改路由。
 
 保留以下显式选项：
 
@@ -82,11 +83,15 @@ bash agent/install.sh --env --sql-file /secure/cc-switch.sql # 环境代理 + �
 要求 root、运行中的 systemd；自动补齐依赖支持 Debian/Ubuntu。
 
 ```bash
-# 先通过私有环境文件设置 SUBSCRIPTION_URL
-bash VPS/singbox/client/install.sh
+bash VPS/singbox/client/install.sh # 交互选择代理并输入订阅 URL
+bash VPS/singbox/client/install.sh --env .env # 读取代理和 SUBSCRIPTION_URL
 ```
 
 订阅请求使用 `User-Agent: sing-box`，Xboard 必须返回可直接运行的完整 JSON。每次执行都会获取并校验配置，校验成功后备份旧配置、替换并重启。已安装且版本匹配的二进制会复用。默认版本为 `1.13.15`。
+
+安装前无需运行 sing-box：选择 SSH 代理时，安装器用系统 OpenSSH 建立独立 SOCKS 隧道，供依赖安装、GitHub 二进制和订阅配置下载使用。下载与校验完成后关闭隧道，再安装文件并启动客户端。SSH 模式需要预先具备 OpenSSH 客户端；无法通过尚未建立的 SSH 隧道安装 SSH 自身。Debian/Ubuntu 的 APT 支持这里使用的 `socks5h` 代理环境。
+
+无终端自动化请加 `--env`。命令行订阅 URL 优先于 `SUBSCRIPTION_URL`，例如 `bash VPS/singbox/client/install.sh --env .env 'https://subscription.example.com/config'`。
 
 客户端保留 SSH 及 Tailscale IPv4/IPv6 bypass。`SSH_PORT` 可指定非 22 端口；自定义值应在 systemd override 中对 `sing-box-client-bypass.service` 设置 `Environment=SSH_PORT=...`，这样重启后仍有效。
 
@@ -98,14 +103,14 @@ bash VPS/singbox/client/install.sh
 bash VPS/singbox/server/install.sh --config-file /secure/server-config.json
 
 # 后续改用远程完整配置：在私有环境文件设置 SINGBOX_SERVER_CONFIG_URL
-bash VPS/singbox/server/install.sh
+bash VPS/singbox/server/install.sh --env .env
 ```
 
-也可用 `SINGBOX_SERVER_CONFIG_FILE` 指定本地文件。两种环境变量只设置一个。没有提供来源时复用 `/etc/sing-box-server/config.json`。远程内容每次运行时重新下载，不安装定时更新任务。
+第一条命令会交互选择下载代理；自动化可加 `--env`。环境模式也可用 `SINGBOX_SERVER_CONFIG_FILE` 指定本地文件，两种来源环境变量只设置一个；命令行来源优先。没有提供来源时复用 `/etc/sing-box-server/config.json`。远程内容每次运行时重新下载，不安装定时更新任务。GitHub 二进制与远程配置使用同一个代理。
 
 `VPS/singbox/server/config.example.json` 是不含真实节点信息的 Hysteria2 示例；必须自行设置认证值并准备证书，不能直接当生产配置运行。sing-box JSON 不自动展开 shell 环境变量。认证信息应保存在仓库外的私有配置文件，或由远程配置服务生成。
 
-本地/远程配置都会先通过 `sing-box check`，再覆盖运行配置。下载或校验失败不修改旧配置。服务启动失败会报错；不会自动回滚配置，可使用 `.bak-*` 备份恢复。`SINGBOX_VERSION` 可覆盖版本，`DOWNLOAD_PROXY` 仅作用于二进制下载。
+本地/远程配置都会先通过 `sing-box check`，再覆盖运行配置。下载或校验失败不修改旧配置。服务启动失败会报错；不会自动回滚配置，可使用 `.bak-*` 备份恢复。`--env` 模式中 `SINGBOX_VERSION` 可覆盖版本。兼容旧的 `DOWNLOAD_PROXY`：仅在代理模式为 `env` 且未指定代理 URL 时作为二进制下载的备用设置；显式普通代理和 SSH 代理优先。
 
 | 资源 | client | server |
 | --- | --- | --- |
@@ -129,6 +134,17 @@ systemctl disable --now sing-box.service bypass.service
 旧目录 `client_config/`、`server_config/` 已由 `client/`、`server/` 替代；所有脚本都应从完整仓库运行。
 
 ## VPS 基础初始化
+
+已有完整仓库时，可用同一套配置给其他脚本及 Git 命令提供代理：
+
+```bash
+bash with-proxy.sh --env .env -- git pull --ff-only
+bash with-proxy.sh --env .env -- bash VPS/ONE_STEP_INIT.sh
+# 不加 --env 时先交互选择代理
+bash with-proxy.sh -- git pull --ff-only
+```
+
+包装命令结束、失败或中断后，临时 SSH 隧道会关闭。它不安装 sing-box，不更改系统代理或路由。首次获取仓库若也需要代理，可先按 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md) 建立手动 SSH 隧道，再下载仓库；公共代理模块位于 `lib/proxy.sh`，安装时需保留完整仓库结构。
 
 Docker 安装源当前按 Debian 配置；完整一键初始化用于 Debian VPS。
 

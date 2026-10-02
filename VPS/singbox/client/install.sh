@@ -11,12 +11,14 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 BYPASS_FILE="${CONFIG_DIR}/bypass.sh"
 BYPASS_UNIT="/etc/systemd/system/sing-box-client-bypass.service"
 SINGBOX_UNIT="/etc/systemd/system/sing-box-client.service"
+LOCK_FILE="/run/lock/neko-sing-box-client.lock"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BYPASS_SOURCE="${SCRIPT_DIR}/bypass.sh"
 TMP_DIR=""
 STAGED_BIN=""
 STAGED_CONFIG=""
+CLI_SUBSCRIPTION_URL=""
 
 source "${SCRIPT_DIR}/../common.sh"
 
@@ -25,8 +27,23 @@ warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*" >&2; }
 error() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; }
 
 usage() {
-  printf 'Usage: sudo %s <subscription-url>\n' "${0##*/}"
-  printf '       sudo SUBSCRIPTION_URL=<url> %s\n' "${0##*/}"
+  printf 'Usage: sudo bash %s [--env [FILE]] [subscription-url]\n' "${0##*/}"
+  printf 'Default: interactive proxy and subscription URL. --env uses INSTALL_* and SUBSCRIPTION_URL.\n'
+}
+
+parse_args() {
+  while (($#)); do
+    case "$1" in
+      --env)
+        USE_ENV=1; shift
+        if [[ $# -gt 0 && "$1" != -* && "$1" != http://* && "$1" != https://* ]]; then ENV_FILE="$1"; shift; fi ;;
+      -h|--help) usage; exit 0 ;;
+      http://*|https://*)
+        [[ -z "$CLI_SUBSCRIPTION_URL" ]] || { error "Only one subscription URL is allowed."; return 2; }
+        CLI_SUBSCRIPTION_URL="$1"; shift ;;
+      *) error "Unknown argument: $1"; usage >&2; return 2 ;;
+    esac
+  done
 }
 
 cleanup_tmpdir() {
@@ -35,6 +52,11 @@ cleanup_tmpdir() {
       rm -rf -- "${TMP_DIR}"
       ;;
   esac
+}
+
+cleanup() {
+  cleanup_proxy
+  cleanup_tmpdir
 }
 
 require_root_and_systemd() {
@@ -70,6 +92,7 @@ install_dependencies() {
   fi
 
   info "Installing required system packages..."
+  ensure_download_proxy
   export DEBIAN_FRONTEND=noninteractive
   apt-get -o Acquire::Retries=3 update
   apt-get install -y --no-install-recommends \
@@ -96,16 +119,11 @@ require_commands() {
 resolve_subscription_url() {
   local subscription_url=""
 
-  if (($# > 1)); then
-    usage >&2
-    exit 1
-  fi
-
-  if (($# == 1)); then
-    subscription_url="$1"
-  elif [[ -n "${SUBSCRIPTION_URL:-}" ]]; then
+  if [[ -n "$CLI_SUBSCRIPTION_URL" ]]; then
+    subscription_url="$CLI_SUBSCRIPTION_URL"
+  elif ((USE_ENV)) && [[ -n "${SUBSCRIPTION_URL:-}" ]]; then
     subscription_url="${SUBSCRIPTION_URL}"
-  elif [[ -t 0 ]]; then
+  elif ((USE_ENV == 0)) && [[ -t 0 ]]; then
     printf 'Enter sing-box subscription URL: ' >&2
     read -r subscription_url
   else
@@ -260,13 +278,25 @@ main() {
   local subscription_url
   local architecture
 
-  if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then usage; return; fi
+  parse_args "$@"
   umask 077
   require_root_and_systemd
+  STATE_DIR="${HOME:-/root}/.local/state/neko-sing-box-client-install"
+  trap cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  proxy_configure
+  if ((USE_ENV)); then
+    STATE_DIR="${INSTALL_PROXY_STATE_DIR:-$STATE_DIR}"
+  else
+    SINGBOX_VERSION=1.13.15; DOWNLOAD_PROXY=""
+  fi
+  subscription_url="$(resolve_subscription_url)"
   install_dependencies
   require_commands
   require_legacy_stopped
-  exec 9>/run/lock/neko-sing-box-client.lock
+  exec 9>"$LOCK_FILE"
   flock -n 9 || { error "Another client installation is running."; return 1; }
 
   if [[ ! -f "${BYPASS_SOURCE}" ]]; then
@@ -275,13 +305,12 @@ main() {
   fi
   bash -n "${BYPASS_SOURCE}"
 
-  subscription_url="$(resolve_subscription_url "$@")"
   architecture="$(resolve_architecture)"
   TMP_DIR="$(mktemp -d /var/tmp/sing-box-install.XXXXXX)"
-  trap cleanup_tmpdir EXIT
 
   stage_singbox "${architecture}"
   stage_config "${STAGED_BIN}" "${subscription_url}"
+  cleanup_proxy
   render_systemd_units
   install_files "${STAGED_CONFIG}"
   start_services

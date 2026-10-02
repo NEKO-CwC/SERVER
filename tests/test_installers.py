@@ -299,6 +299,7 @@ install_files
 CONFIG_URL=""
 CONFIG_SOURCE=""
 parse_args
+resolve_config_source
 stage_config
 ''')
         self.assertEqual((self.root / "stage/config.json").read_text(), '{"new":true}')
@@ -328,7 +329,8 @@ stage_config "$TEST_ROOT/binary" https://subscription.example.invalid
 
 class RepositoryTests(unittest.TestCase):
     def test_shell_syntax(self):
-        scripts = list((REPO / "agent").rglob("*.sh")) + list((REPO / "VPS").rglob("*.sh"))
+        scripts = (list((REPO / "agent").rglob("*.sh")) + list((REPO / "VPS").rglob("*.sh"))
+                   + list((REPO / "lib").rglob("*.sh")) + [REPO / "with-proxy.sh"])
         for script in scripts:
             with self.subTest(script=str(script.relative_to(REPO))):
                 result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True, timeout=5)

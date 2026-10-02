@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SUBSCRIPTION_URL="${1:?subscription URL is required}"
-WORKSPACE="/workspace"
+WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR="/etc/sing-box-client"
 
 assert_file() {
@@ -20,7 +20,7 @@ echo "[verify] waiting for systemd"
 systemctl is-system-running --wait 2>/dev/null || true
 
 echo "[verify] installing from the local sing-box-UA subscription"
-bash "${WORKSPACE}/install.sh" "${SUBSCRIPTION_URL}"
+bash "${WORKSPACE}/install.sh" --env "${SUBSCRIPTION_URL}"
 
 echo "[verify] checking installed files and services"
 assert_file /usr/local/lib/sing-box-client/sing-box
@@ -86,7 +86,7 @@ assert_active sing-box-client.service
 echo "[verify] checking idempotent reinstall"
 ln -sfn /etc/systemd/system/sing-box-client-bypass.service /etc/systemd/system/multi-user.target.wants/sing-box-client-bypass.service
 [[ "$(systemctl is-enabled sing-box-client-bypass.service)" == enabled ]]
-bash "${WORKSPACE}/install.sh" "${SUBSCRIPTION_URL}" >/tmp/singbox-reinstall.log 2>&1
+bash "${WORKSPACE}/install.sh" --env "${SUBSCRIPTION_URL}" >/tmp/singbox-reinstall.log 2>&1
 if grep -Fq 'The unit files have no installation config' /tmp/singbox-reinstall.log; then
   echo "reinstall tried to disable the static bypass unit" >&2
   exit 1

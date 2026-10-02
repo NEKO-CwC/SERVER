@@ -13,4 +13,4 @@ trap cleanup EXIT
 
 "${COMPOSE[@]}" build client
 "${COMPOSE[@]}" up -d --wait subscription client
-"${COMPOSE[@]}" exec -T client bash /workspace/test/verify.sh http://subscription:8080/config.json
+"${COMPOSE[@]}" exec -T client bash /repo/VPS/singbox/client/test/verify.sh http://subscription:8080/config.json

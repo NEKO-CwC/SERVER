@@ -131,12 +131,16 @@ class SSHFixture(socketserver.ThreadingTCPServer):
 
 class DownloadHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path != "/install.sh":
-            self.send_error(404)
-            return
-        payload = b'''#!/bin/sh
+        self.server.user_agents[self.path] = self.headers.get("User-Agent")
+        if self.path in self.server.payloads:
+            payload = self.server.payloads[self.path]
+        elif self.path == "/install.sh":
+            payload = b'''#!/bin/sh
 python3 -c 'import json,os,pathlib; pathlib.Path(os.environ["TEST_ROOT"],"installer-env.json").write_text(json.dumps(dict(os.environ)))'
 '''
+        else:
+            self.send_error(404)
+            return
         self.send_response(200)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -147,11 +151,13 @@ python3 -c 'import json,os,pathlib; pathlib.Path(os.environ["TEST_ROOT"],"instal
 
 
 @unittest.skipUnless(paramiko is not None and shutil.which("ssh"), "requires paramiko and OpenSSH for isolated SSH integration tests")
-class SSHProxyTests(ShellTests):
+class SSHProxyFixture(ShellTests):
     def setUp(self):
         super().setUp()
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), DownloadHandler)
         self.http.requests = []
+        self.http.payloads = {}
+        self.http.user_agents = {}
         self.ssh = SSHFixture(("127.0.0.1", 0), SSHHandler)
         self.ssh.http_port = self.http.server_port
         self.ssh.host_key = paramiko.RSAKey.generate(2048)
@@ -203,6 +209,9 @@ class SSHProxyTests(ShellTests):
             self.assertNotEqual(sock.connect_ex(("127.0.0.1", self.socks_port)), 0)
         if (self.root / "runtime-dir").exists():
             self.assertFalse(Path((self.root / "runtime-dir").read_text().strip()).exists())
+
+
+class SSHProxyTests(SSHProxyFixture):
 
     def test_real_ssh_download_remote_dns_child_env_and_cleanup(self):
         result = self.bash(PROXY_SETUP + '''ensure_download_proxy
