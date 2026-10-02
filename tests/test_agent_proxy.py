@@ -19,6 +19,8 @@ except ImportError:
 
 PROXY_KEYS = ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
 PROXY_SETUP = '''source agent/install.sh
+parse_args --env
+collect_configuration
 umask 077
 install -d -m 0700 "$STATE_DIR"
 trap cleanup_proxy EXIT
@@ -52,7 +54,7 @@ class ProxyEnvironmentTests(AgentFixture):
         self.bash('''export PATH="$TEST_ROOT/bin:$PATH"
 source agent/install.sh
 check_root() { :; }
-main --skip-config
+main --env --skip-config
 ''')
         self.assertFalse((self.root / "calls").exists())
         self.assertFalse((self.root / "state/ssh-proxy.log").exists())
@@ -217,6 +219,34 @@ ensure_download_proxy
         self.assertEqual(self.ssh.session_requests, [])
         self.assertIn(("download.example.invalid", self.http.server_port), self.ssh.destinations)
         self.assertEqual((self.root / "state/ssh-proxy.log").stat().st_mode & 0o777, 0o600)
+        self.assert_tunnel_cleaned()
+
+    def test_interactive_ssh_uses_prompt_values_and_hides_password(self):
+        self.env.update(AGENT_SSH_HOST="ignored.example.invalid", AGENT_SSH_PASSWORD="ignored-environment-password")
+        output = self.bash_tty('''source agent/install.sh
+parse_args --skip-config
+set_default_paths() {
+  STATE_DIR="$TEST_ROOT/state"
+  CC_CONFIG_DIR="$TEST_ROOT/config"
+  BASHRC_FILE="$TEST_ROOT/bashrc"
+}
+umask 077
+collect_configuration
+install -d -m 0700 "$STATE_DIR"
+trap cleanup_proxy EXIT
+prepare_process_env
+ensure_download_proxy
+printf '%s' "$SSH_PROXY_DIR" >"$TEST_ROOT/runtime-dir"
+run_installer "http://download.example.invalid:$1/install.sh" sh
+''', [
+            ("代理方式", "3"), ("SSH 主机", "127.0.0.1"),
+            ("SSH 用户", "fixture-user"), ("SSH 密码", self.ssh.password),
+            ("SSH 端口", "999999"), ("SSH 端口", str(self.ssh.server_address[1])),
+            ("本地 SOCKS 端口", str(self.socks_port)), ("known_hosts 文件", str(self.known_hosts)),
+        ], self.http.server_port)
+        self.assertNotIn(self.ssh.password, output)
+        self.assertEqual(self.ssh.auth_attempts, 1)
+        self.assertEqual(self.http.requests, ["/install.sh"])
         self.assert_tunnel_cleaned()
 
     def test_wrong_password_and_untrusted_host_stop_without_downloading(self):

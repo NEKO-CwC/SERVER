@@ -1,8 +1,13 @@
 import json
+import errno
 import os
 from pathlib import Path
+import pty
+import select
 import subprocess
 import tempfile
+import termios
+import time
 import unittest
 
 
@@ -34,6 +39,56 @@ class ShellTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
+    def bash_tty(self, body, conversation, *args, ok=True):
+        master, slave = pty.openpty()
+        process = subprocess.Popen(
+            ["bash", "-c", 'set -euo pipefail\n' + body, "test", *map(str, args)],
+            cwd=REPO, env=self.env, stdin=slave, stdout=slave, stderr=slave,
+            start_new_session=True,
+        )
+        os.close(slave)
+        output = bytearray()
+        cursor = 0
+        deadline = time.monotonic() + 15
+
+        def receive():
+            if time.monotonic() >= deadline:
+                self.fail("Interactive test exceeded deadline: " + output.decode(errors="replace"))
+            if select.select([master], [], [], 0.1)[0]:
+                try:
+                    output.extend(os.read(master, 65536))
+                except OSError as error:
+                    if error.errno != errno.EIO:
+                        raise
+
+        try:
+            for prompt, answer in conversation:
+                token = prompt.encode()
+                while output.find(token, cursor) < 0:
+                    receive()
+                    if process.poll() is not None:
+                        self.fail("Exited before prompt: " + output.decode(errors="replace"))
+                cursor = output.index(token, cursor) + len(token)
+                # Send passwords only after read -s has disabled terminal echo.
+                if "密码" in prompt:
+                    while termios.tcgetattr(master)[3] & termios.ECHO:
+                        receive()
+                os.write(master, b"\x04" if answer is None else (answer + "\n").encode())
+            while process.poll() is None:
+                receive()
+            receive()
+            text = output.decode(errors="replace")
+            if ok:
+                self.assertEqual(process.returncode, 0, text)
+            else:
+                self.assertNotEqual(process.returncode, 0, text)
+            return text
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=3)
+            os.close(master)
+
 
 class AgentFixture(ShellTests):
     def setUp(self):
@@ -42,6 +97,8 @@ class AgentFixture(ShellTests):
             AGENT_PROXY_MODE="env",
             AGENT_PROXY_URL="",
             AGENT_SSH_PASSWORD="",
+            CC_SWITCH_CONFIG_SOURCE="dav",
+            CC_SWITCH_SQL_FILE="",
             AGENT_INSTALL_STATE_DIR=str(self.root / "state"),
             AGENT_BASHRC=str(self.root / "bashrc"),
             CC_SWITCH_CONFIG_DIR=str(self.root / "config"),
@@ -50,18 +107,19 @@ class AgentFixture(ShellTests):
             CC_SWITCH_WEBDAV_PASSWORD="fixture-secret-only",
         )
         self.script("bin/curl", '''#!/usr/bin/env python3
-import os, pathlib, sys
+import json, os, pathlib, sys
 root = pathlib.Path(os.environ['TEST_ROOT'])
 args = sys.argv[1:]
 url = next(arg for arg in args if arg.startswith('https://'))
 tool = 'cc-switch' if 'cc-switch-cli' in url else ('claude' if 'claude.ai' in url else 'codex')
 with (root / 'calls').open('a') as out: out.write('download:' + tool + '\\n')
+(root / 'download-env.json').write_text(json.dumps({key: os.environ.get(key) for key in ('http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}))
 dest = pathlib.Path(args[args.index('-o') + 1])
 dest.write_text('cp "$TEST_ROOT/payload/' + tool + '" "$TEST_ROOT/bin/' + tool + '"\\nchmod +x "$TEST_ROOT/bin/' + tool + '"\\n')
 if os.environ.get('TEST_FAIL_DOWNLOAD') == tool: sys.exit(22)
 ''')
         self.script("payload/cc-switch", '''#!/usr/bin/env python3
-import os, pathlib, sys
+import json, os, pathlib, sys
 root = pathlib.Path(os.environ['TEST_ROOT'])
 args = sys.argv[1:]
 if args == ['--version']:
@@ -69,6 +127,8 @@ if args == ['--version']:
     sys.exit(0)
 event = ':'.join(args[:3]) if args[:2] == ['config', 'webdav'] else ':'.join(args[:2])
 with (root / 'calls').open('a') as out: out.write(event + '\\n')
+if event == 'config:webdav:set': (root / 'dav-args.json').write_text(json.dumps(args))
+if event == 'config:import': (root / 'sql-path').write_text(args[2])
 if os.environ.get('TEST_FAIL_CONFIG') == event:
     print(os.environ['CC_SWITCH_WEBDAV_PASSWORD'])
     sys.exit(1)
@@ -85,7 +145,7 @@ if event in ('config:import', 'config:webdav:download'):
 # Keep the process, PATH and target files inside this test sandbox.
 check_root() { :; }
 prepare_process_env() { export PATH="$TEST_ROOT/bin:$PATH"; }
-main "$@"
+main --env "$@"
 ''', *args, ok=ok)
 
     def calls(self):

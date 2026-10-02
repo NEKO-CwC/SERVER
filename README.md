@@ -16,12 +16,14 @@ Linux VPS 基础初始化、Agent 安装，以及独立的 sing-box client/serve
 
 ## 私有配置
 
-仓库不提供真实密码、订阅 token、服务器地址或证书。克隆后，在 root Bash 中配置：
+仓库不提供真实密码、订阅 token、服务器地址或证书。Agent 默认在终端交互输入，无需环境文件。需要保存参数时，可创建私有配置：
 
 ```bash
 cp .env.example .env
 chmod 600 .env
 # 编辑 .env，填写本次需要的变量
+# Agent 通过 bash agent/install.sh --env .env 直接加载。
+# 其他脚本或 Agent 的 --env（不带文件）模式可先导出变量：
 set -a
 source .env
 set +a
@@ -31,22 +33,36 @@ set +a
 
 ## Agent 安装与重试
 
-在 root Bash 中运行：
+在 root Bash 中选择输入方式：
 
 ```bash
-bash agent/install.sh                    # 使用环境变量中的 WebDAV 配置
-bash agent/install.sh --sql-file /secure/cc-switch.sql
-bash agent/install.sh --skip-config      # 只安装工具，不导入配置
+bash agent/install.sh                       # 默认交互输入
+bash agent/install.sh --env                 # 使用已导出的环境变量，不提问
+bash agent/install.sh --env /secure/agent.env # 加载指定环境文件，不提问
 ```
 
-`CC_SWITCH_WEBDAV_BASE_URL`、`CC_SWITCH_WEBDAV_USERNAME`、`CC_SWITCH_WEBDAV_PASSWORD` 必须由环境提供。
+默认交互流程先选择代理方式（不使用代理、HTTP/HTTPS/SOCKS 地址、SSH SOCKS），再选择 cc-switch 配置来源：**WebDAV（默认）或本地 SQL 文件**。选择后输入相应参数，密码隐藏输入，必填项不能为空。直接回车默认不使用代理、通过 WebDAV 获取配置。交互模式不从现有 Agent 配置变量或代理环境变量中取值，也不保存输入的密码。
 
-下载代理有两种方式，通过 `.env` 中的 `AGENT_PROXY_MODE` 选择：
+无终端时必须使用 `--env` 或 `--env FILE`；缺少必填配置会在安装前报错，不会切换到交互模式。旧的自动化安装命令需要补上 `--env`。`--env FILE` 按 Bash 语法读取明确指定的可信文件，文件中的赋值覆盖同名环境变量；不会自动查找 `.env`。
 
-- `env`（默认）：`AGENT_PROXY_URL` 会统一设置大小写 HTTP/HTTPS/ALL_PROXY；为空时保留 shell 已有的代理设置。
-- `ssh`：从 `AGENT_SSH_HOST`、`AGENT_SSH_USER`、`AGENT_SSH_PASSWORD` 建立临时 SSH SOCKS 隧道，使用 `socks5h://127.0.0.1:1080`。只有需要下载或 WebDAV 同步时才启动，安装成功、失败或收到终止信号后都会关闭。
+环境模式下的配置来源：
 
-SSH 模式的依赖、首次主机密钥确认、端口配置和手动使用方法见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。密码仅保存在私有环境文件；脚本不配置远端 SSH 账户、不启动 TUN，也不修改系统路由。
+- `CC_SWITCH_CONFIG_SOURCE=dav`（默认）：填写 `CC_SWITCH_WEBDAV_BASE_URL`、`CC_SWITCH_WEBDAV_USERNAME`、`CC_SWITCH_WEBDAV_PASSWORD`；Remote Root 默认 `cc-switch-sync`，Profile 默认 `default`。
+- `CC_SWITCH_CONFIG_SOURCE=sql`：填写 `CC_SWITCH_SQL_FILE`，指向本地可读 SQL 文件，无需 WebDAV 凭据。
+
+环境模式下的代理由 `AGENT_PROXY_MODE` 选择：`none` 为直连；`env`（默认）使用 `AGENT_PROXY_URL`，为空时继承已设置的 HTTP/HTTPS/ALL_PROXY；`ssh` 使用 `AGENT_SSH_HOST`、`AGENT_SSH_USER`、`AGENT_SSH_PASSWORD` 建立临时隧道。两种输入方式都复用相同的代理与安装逻辑。
+
+SSH 只在需要下载或 WebDAV 同步时启动，安装成功、失败或终止后关闭。依赖、主机密钥确认与手动使用方法见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。脚本不配置远端账户、不启用 TUN，也不修改路由。
+
+保留以下显式选项：
+
+```bash
+bash agent/install.sh --sql-file /secure/cc-switch.sql # 仅询问代理，直接采用指定 SQL
+bash agent/install.sh --skip-config                   # 仅询问代理，只安装工具
+bash agent/install.sh --env --sql-file /secure/cc-switch.sql # 环境代理 + 指定 SQL
+```
+
+`--sql-file` 优先于环境中的配置来源；`--skip-config` 跳过整个配置导入阶段。
 
 - 每次运行都检查工具的 `--version`；正常则跳过，缺失或不可运行则重新安装。
 - 配置成功后保存来源指纹；相同来源且本地数据库存在时跳过。SQL 内容或 WebDAV 参数变化会触发重新导入。
@@ -57,7 +73,7 @@ SSH 模式的依赖、首次主机密钥确认、端口配置和手动使用方�
 
 状态默认在 `~/.local/state/neko-agent-install/`（目录权限 700）。配置命令失败日志可能含凭据，仅保存在该目录。成功指纹不包含明文凭据。旧安装没有成功记录时，首次运行新脚本会同步一次配置。
 
-可用 `AGENT_INSTALL_STATE_DIR` 调整状态目录，`AGENT_BASHRC` 调整 aliases 文件。cc-switch 数据目录遵循 `CC_SWITCH_CONFIG_DIR`，默认 `~/.cc-switch`。这里仅以非空数据库和成功记录判断是否已导入；需要修复被修改的配置时请使用 `--refresh-config`。
+`--env` 模式可用 `AGENT_INSTALL_STATE_DIR` 调整状态目录、`AGENT_BASHRC` 调整 aliases 文件、`CC_SWITCH_CONFIG_DIR` 调整 cc-switch 数据目录。交互模式使用默认路径，分别为 `~/.local/state/neko-agent-install/`、`~/.bashrc` 和 `~/.cc-switch`。这里仅以非空数据库和成功记录判断是否已导入；需要修复被修改的配置时请使用 `--refresh-config`。
 
 ## sing-box client
 

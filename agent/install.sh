@@ -3,25 +3,32 @@ set -euo pipefail
 
 # Linux agent installer: cc-switch + WebDAV/SQL config + Claude Code + Codex.
 
-PROXY_URL="${AGENT_PROXY_URL:-}"
-PROXY_MODE="${AGENT_PROXY_MODE:-env}"
-SSH_PROXY_PASSWORD="${AGENT_SSH_PASSWORD:-}"
-# Only the SSH process/askpass helper receives this secret, never installers.
-unset AGENT_SSH_PASSWORD
-export -n SSH_PROXY_PASSWORD
+USE_ENV=0
+ENV_FILE=""
+PROXY_URL=""
+PROXY_MODE="none"
+SSH_PROXY_HOST=""
+SSH_PROXY_USER=""
+SSH_PROXY_PASSWORD=""
+SSH_PROXY_PORT=22
+SSH_PROXY_SOCKS_PORT=1080
+SSH_PROXY_KNOWN_HOSTS_FILE=""
 SSH_PROXY_PID=""
 SSH_PROXY_DIR=""
+CONFIG_SOURCE="dav"
 SQL_FILE=""
+CLI_SQL_FILE=""
 FORCE=0
 REFRESH_CONFIG=0
 SKIP_CONFIG=0
-WEBDAV_BASE_URL="${CC_SWITCH_WEBDAV_BASE_URL:-}"
-WEBDAV_REMOTE_ROOT="${CC_SWITCH_WEBDAV_REMOTE_ROOT:-cc-switch-sync}"
-WEBDAV_PROFILE="${CC_SWITCH_WEBDAV_PROFILE:-default}"
-WEBDAV_USERNAME="${CC_SWITCH_WEBDAV_USERNAME:-}"
-WEBDAV_PASSWORD="${CC_SWITCH_WEBDAV_PASSWORD:-}"
-STATE_DIR="${AGENT_INSTALL_STATE_DIR:-${HOME:-/root}/.local/state/neko-agent-install}"
-CC_CONFIG_DIR="${CC_SWITCH_CONFIG_DIR:-${HOME:-/root}/.cc-switch}"
+WEBDAV_BASE_URL=""
+WEBDAV_REMOTE_ROOT="cc-switch-sync"
+WEBDAV_PROFILE="default"
+WEBDAV_USERNAME=""
+WEBDAV_PASSWORD=""
+STATE_DIR=""
+CC_CONFIG_DIR=""
+BASHRC_FILE=""
 CONFIG_FINGERPRINT=""
 
 log_step() {
@@ -38,9 +45,14 @@ log_error() {
 
 print_usage() {
   cat <<'EOF'
-Usage: install.sh [--sql-file FILE | --skip-config] [--refresh-config] [--force]
+Usage: install.sh [--env [FILE]] [--sql-file FILE | --skip-config]
+                  [--refresh-config] [--force]
+
+Without --env, interactively choose a proxy and cc-switch source (default: DAV).
+Passwords are read without echo. A terminal is required for interactive mode.
 
 Options:
+  --env [FILE]    Non-interactive: use environment variables, optionally loading FILE.
   --sql-file FILE  Import cc-switch config from a local SQL file and skip WebDAV.
   --skip-config    Install tools without importing/syncing configuration.
   --refresh-config  Sync/import again even if the same source already succeeded.
@@ -48,17 +60,28 @@ Options:
   -h, --help       Show this help message.
 
 Proxy environment:
+  Environment variables below are only read with --env.
+  AGENT_PROXY_MODE=none  Download directly without a proxy.
   AGENT_PROXY_MODE=env  Use AGENT_PROXY_URL or inherited proxy variables (default).
   AGENT_PROXY_MODE=ssh  Start an SSH SOCKS tunnel on the first network operation.
   SSH mode requires AGENT_SSH_HOST, AGENT_SSH_USER, AGENT_SSH_PASSWORD.
   Optional: AGENT_SSH_PORT=22, AGENT_SSH_SOCKS_PORT=1080,
             AGENT_SSH_KNOWN_HOSTS_FILE (defaults to OpenSSH known_hosts).
+
+cc-switch environment:
+  CC_SWITCH_CONFIG_SOURCE=dav  Download WebDAV configuration (default).
+  CC_SWITCH_CONFIG_SOURCE=sql  Import CC_SWITCH_SQL_FILE from a local file.
 EOF
 }
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --env)
+        USE_ENV=1
+        shift
+        if [[ $# -gt 0 && "$1" != -* ]]; then ENV_FILE="$1"; shift; fi
+        ;;
       --force) FORCE=1; shift ;;
       --refresh-config) REFRESH_CONFIG=1; shift ;;
       --skip-config) SKIP_CONFIG=1; shift ;;
@@ -67,7 +90,7 @@ parse_args() {
           log_error "--sql-file 需要指定 SQL 文件"
           return 2
         fi
-        SQL_FILE="$2"
+        CLI_SQL_FILE="$2"
         shift 2
         ;;
       -h|--help)
@@ -82,20 +105,144 @@ parse_args() {
     esac
   done
 
-  if ((SKIP_CONFIG)) && { [[ -n "$SQL_FILE" ]] || ((REFRESH_CONFIG)); }; then
+  if ((SKIP_CONFIG)) && { [[ -n "$CLI_SQL_FILE" ]] || ((REFRESH_CONFIG)); }; then
     log_error "--skip-config 不能与 --sql-file 或 --refresh-config 一起使用"
     return 2
   fi
 
-  if [[ -n "$SQL_FILE" ]]; then
-    if [[ ! -f "$SQL_FILE" ]]; then
-      log_error "SQL 文件不存在: $SQL_FILE"
-      return 2
+}
+
+set_default_paths() {
+  STATE_DIR="${HOME:-/root}/.local/state/neko-agent-install"
+  CC_CONFIG_DIR="${HOME:-/root}/.cc-switch"
+  BASHRC_FILE="${HOME:-/root}/.bashrc"
+}
+
+load_environment_config() {
+  if [[ -n "$ENV_FILE" ]]; then
+    [[ -f "$ENV_FILE" && -r "$ENV_FILE" ]] || { log_error "--env 文件不存在或不可读"; return 2; }
+    # The explicitly selected file is trusted Bash syntax, never an implicit .env.
+    if [[ "$ENV_FILE" != /* ]]; then ENV_FILE="./${ENV_FILE}"; fi
+    source "$ENV_FILE"
+  fi
+  PROXY_MODE="${AGENT_PROXY_MODE:-env}"
+  PROXY_URL="${AGENT_PROXY_URL:-}"
+  SSH_PROXY_HOST="${AGENT_SSH_HOST:-}"
+  SSH_PROXY_USER="${AGENT_SSH_USER:-}"
+  SSH_PROXY_PASSWORD="${AGENT_SSH_PASSWORD:-}"
+  SSH_PROXY_PORT="${AGENT_SSH_PORT:-22}"
+  SSH_PROXY_SOCKS_PORT="${AGENT_SSH_SOCKS_PORT:-1080}"
+  SSH_PROXY_KNOWN_HOSTS_FILE="${AGENT_SSH_KNOWN_HOSTS_FILE:-}"
+  CONFIG_SOURCE="${CC_SWITCH_CONFIG_SOURCE:-dav}"
+  SQL_FILE="${CC_SWITCH_SQL_FILE:-}"
+  WEBDAV_BASE_URL="${CC_SWITCH_WEBDAV_BASE_URL:-}"
+  WEBDAV_REMOTE_ROOT="${CC_SWITCH_WEBDAV_REMOTE_ROOT:-cc-switch-sync}"
+  WEBDAV_PROFILE="${CC_SWITCH_WEBDAV_PROFILE:-default}"
+  WEBDAV_USERNAME="${CC_SWITCH_WEBDAV_USERNAME:-}"
+  WEBDAV_PASSWORD="${CC_SWITCH_WEBDAV_PASSWORD:-}"
+  STATE_DIR="${AGENT_INSTALL_STATE_DIR:-$STATE_DIR}"
+  CC_CONFIG_DIR="${CC_SWITCH_CONFIG_DIR:-$CC_CONFIG_DIR}"
+  BASHRC_FILE="${AGENT_BASHRC:-$BASHRC_FILE}"
+}
+
+prompt_value() {
+  local target="$1" label="$2" default="${3:-}" required="${4:-1}" secret="${5:-0}" answer
+  while true; do
+    printf '%s' "$label" >&2
+    if [[ -n "$default" ]]; then printf ' [%s]' "$default" >&2; fi
+    printf ': ' >&2
+    if ((secret)); then
+      if ! IFS= read -r -s answer; then printf '\n' >&2; log_error "输入已取消"; return 2; fi
+      printf '\n' >&2
+    else
+      if ! IFS= read -r answer; then log_error "输入已取消"; return 2; fi
     fi
-    if [[ ! -r "$SQL_FILE" ]]; then
-      log_error "SQL 文件不可读: $SQL_FILE"
-      return 2
-    fi
+    answer="${answer:-$default}"
+    if ((required)) && [[ -z "$answer" ]]; then log_error "此项不能为空"; continue; fi
+    printf -v "$target" '%s' "$answer"
+    return 0
+  done
+}
+
+valid_port() {
+  [[ "$1" =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535))
+}
+
+prompt_port() {
+  local port_value
+  while true; do
+    prompt_value port_value "$2" "$3" || return $?
+    if valid_port "$port_value"; then printf -v "$1" '%s' "$port_value"; return; fi
+    log_error "端口必须在 1–65535 之间"
+  done
+}
+
+prompt_configuration() {
+  local choice
+  if [[ ! -t 0 ]]; then
+    log_error "默认交互模式需要终端；自动运行请使用 --env 或 --env FILE"
+    return 2
+  fi
+  while true; do
+    prompt_value choice "代理方式：1) 不使用代理  2) HTTP/HTTPS/SOCKS 地址  3) SSH SOCKS" 1
+    case "$choice" in
+      1) PROXY_MODE=none; break ;;
+      2) PROXY_MODE=env; prompt_value PROXY_URL "代理 URL"; break ;;
+      3)
+        PROXY_MODE=ssh
+        prompt_value SSH_PROXY_HOST "SSH 主机"
+        prompt_value SSH_PROXY_USER "SSH 用户" bash-proxy
+        prompt_value SSH_PROXY_PASSWORD "SSH 密码" "" 1 1
+        prompt_port SSH_PROXY_PORT "SSH 端口" 22
+        prompt_port SSH_PROXY_SOCKS_PORT "本地 SOCKS 端口" 1080
+        prompt_value SSH_PROXY_KNOWN_HOSTS_FILE "known_hosts 文件（留空使用 OpenSSH 默认文件）" "" 0
+        break ;;
+      *) log_error "请选择 1、2 或 3" ;;
+    esac
+  done
+  if ((SKIP_CONFIG)) || [[ -n "$CLI_SQL_FILE" ]]; then return; fi
+  while true; do
+    prompt_value choice "cc-switch 配置来源：1) WebDAV  2) 本地 SQL 文件" 1
+    case "$choice" in
+      1)
+        CONFIG_SOURCE=dav
+        prompt_value WEBDAV_BASE_URL "WebDAV Base URL"
+        prompt_value WEBDAV_USERNAME "WebDAV 用户名"
+        prompt_value WEBDAV_PASSWORD "WebDAV 密码" "" 1 1
+        prompt_value WEBDAV_REMOTE_ROOT "WebDAV Remote Root" cc-switch-sync
+        prompt_value WEBDAV_PROFILE "WebDAV Profile" default
+        break ;;
+      2)
+        CONFIG_SOURCE=sql
+        while true; do
+          prompt_value SQL_FILE "本地 SQL 文件路径"
+          if [[ -f "$SQL_FILE" && -r "$SQL_FILE" ]]; then break; fi
+          log_error "SQL 文件不存在或不可读，请重新输入"
+        done
+        break ;;
+      *) log_error "请选择 1 或 2" ;;
+    esac
+  done
+}
+
+collect_configuration() {
+  set_default_paths
+  if ((USE_ENV)); then load_environment_config; else prompt_configuration; fi
+  # Keep SSH credentials out of installer subprocesses in either input mode.
+  unset AGENT_SSH_PASSWORD
+  export -n SSH_PROXY_PASSWORD
+  export CC_SWITCH_CONFIG_DIR="$CC_CONFIG_DIR"
+  if [[ -n "$CLI_SQL_FILE" ]]; then CONFIG_SOURCE=sql; SQL_FILE="$CLI_SQL_FILE"; fi
+  if ((SKIP_CONFIG == 0)); then
+    case "$CONFIG_SOURCE" in
+      dav|webdav) CONFIG_SOURCE=dav; SQL_FILE="" ;;
+      sql)
+        if [[ ! -f "$SQL_FILE" || ! -r "$SQL_FILE" ]]; then
+          log_error "SQL 来源需要可读的 CC_SWITCH_SQL_FILE，或使用 --sql-file FILE"
+          return 2
+        fi ;;
+      *) log_error "CC_SWITCH_CONFIG_SOURCE 仅支持 dav 或 sql"; return 2 ;;
+    esac
   fi
 }
 
@@ -131,13 +278,31 @@ prepare_process_env() {
   log_step "配置当前安装进程环境"
 
   export PATH="/root/.local/bin:${HOME:-/root}/.local/bin:$PATH"
+  if ((USE_ENV == 0)); then
+    unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY
+  else
+    local proxy_key
+    for proxy_key in http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY; do
+      if [[ -v "$proxy_key" ]]; then export "$proxy_key"; fi
+    done
+  fi
   case "$PROXY_MODE" in
+    none)
+      unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+      log_info "不使用代理"
+      ;;
     env)
+      if [[ -n "$PROXY_URL" ]]; then
+        case "$PROXY_URL" in
+          http://?*|https://?*|socks5://?*|socks5h://?*) ;;
+          *) log_error "代理 URL 必须使用 http、https、socks5 或 socks5h"; return 2 ;;
+        esac
+      fi
       if [[ -n "$PROXY_URL" ]]; then export_proxy "$PROXY_URL"; fi
       log_info "使用当前进程的代理环境变量"
       ;;
     ssh) log_info "SSH SOCKS 模式：需要联网时建立临时隧道" ;;
-    *) log_error "AGENT_PROXY_MODE 仅支持 env 或 ssh"; return 2 ;;
+    *) log_error "AGENT_PROXY_MODE 仅支持 none、env 或 ssh"; return 2 ;;
   esac
 }
 
@@ -148,7 +313,7 @@ export_proxy() {
 
 ssh_proxy_control() {
   ssh -F /dev/null -S "${SSH_PROXY_DIR}/control" -O check \
-    -p "${AGENT_SSH_PORT:-22}" -l "$AGENT_SSH_USER" "$AGENT_SSH_HOST" \
+    -p "$SSH_PROXY_PORT" -l "$SSH_PROXY_USER" "$SSH_PROXY_HOST" \
     >/dev/null 2>&1
 }
 
@@ -160,19 +325,19 @@ ensure_download_proxy() {
     return 1
   fi
 
-  local ssh_port="${AGENT_SSH_PORT:-22}" socks_port="${AGENT_SSH_SOCKS_PORT:-1080}"
+  local ssh_port="$SSH_PROXY_PORT" socks_port="$SSH_PROXY_SOCKS_PORT"
   local value deadline
-  if [[ -z "${AGENT_SSH_HOST:-}" || -z "${AGENT_SSH_USER:-}" || -z "$SSH_PROXY_PASSWORD" ]]; then
-    log_error "SSH 模式需要 AGENT_SSH_HOST、AGENT_SSH_USER、AGENT_SSH_PASSWORD"
+  if [[ -z "$SSH_PROXY_HOST" || -z "$SSH_PROXY_USER" || -z "$SSH_PROXY_PASSWORD" ]]; then
+    log_error "SSH 模式需要主机、用户名和密码（--env 模式使用 AGENT_SSH_HOST、AGENT_SSH_USER、AGENT_SSH_PASSWORD）"
     return 2
   fi
-  if [[ "$AGENT_SSH_HOST" == -* || "$AGENT_SSH_HOST" == *[!a-zA-Z0-9.:-]* ||
-        "$AGENT_SSH_USER" == -* || "$AGENT_SSH_USER" == *[!a-zA-Z0-9_.-]* ]]; then
+  if [[ "$SSH_PROXY_HOST" == -* || "$SSH_PROXY_HOST" == *[!a-zA-Z0-9.:-]* ||
+        "$SSH_PROXY_USER" == -* || "$SSH_PROXY_USER" == *[!a-zA-Z0-9_.-]* ]]; then
     log_error "SSH 主机或用户名格式无效"
     return 2
   fi
   for value in "$ssh_port" "$socks_port"; do
-    if [[ ! "$value" =~ ^[0-9]{1,5}$ ]] || ((10#$value < 1 || 10#$value > 65535)); then
+    if ! valid_port "$value"; then
       log_error "SSH 端口和 SOCKS 端口必须在 1–65535 之间"
       return 2
     fi
@@ -191,7 +356,7 @@ ASKPASS
 
   local options=(
     -F /dev/null -N -T -n -M -S "${SSH_PROXY_DIR}/control"
-    -D "127.0.0.1:${socks_port}" -p "$ssh_port" -l "$AGENT_SSH_USER"
+    -D "127.0.0.1:${socks_port}" -p "$ssh_port" -l "$SSH_PROXY_USER"
     -o ExitOnForwardFailure=yes -o ControlPersist=no
     -o ConnectTimeout=15 -o ConnectionAttempts=1
     -o ServerAliveInterval=15 -o ServerAliveCountMax=2
@@ -199,14 +364,14 @@ ASKPASS
     -o KbdInteractiveAuthentication=no -o NumberOfPasswordPrompts=1
     -o StrictHostKeyChecking=yes -o UpdateHostKeys=no
   )
-  if [[ -n "${AGENT_SSH_KNOWN_HOSTS_FILE:-}" ]]; then
-    [[ -r "$AGENT_SSH_KNOWN_HOSTS_FILE" ]] || { log_error "SSH known_hosts 文件不可读"; return 2; }
-    options+=(-o "UserKnownHostsFile=\"${AGENT_SSH_KNOWN_HOSTS_FILE}\"")
+  if [[ -n "$SSH_PROXY_KNOWN_HOSTS_FILE" ]]; then
+    [[ -r "$SSH_PROXY_KNOWN_HOSTS_FILE" ]] || { log_error "SSH known_hosts 文件不可读"; return 2; }
+    options+=(-o "UserKnownHostsFile=\"${SSH_PROXY_KNOWN_HOSTS_FILE}\"")
   fi
   log_info "建立临时 SSH SOCKS 隧道（仅监听 127.0.0.1:${socks_port}）"
   AGENT_SSH_PASSWORD="$SSH_PROXY_PASSWORD" \
     SSH_ASKPASS="${SSH_PROXY_DIR}/askpass" SSH_ASKPASS_REQUIRE=force \
-    ssh "${options[@]}" "$AGENT_SSH_HOST" \
+    ssh "${options[@]}" "$SSH_PROXY_HOST" \
     </dev/null 9>&- >"${STATE_DIR}/ssh-proxy.log" 2>&1 &
   SSH_PROXY_PID=$!
   deadline=$((SECONDS + 20))
@@ -337,7 +502,7 @@ install_codex() {
 write_bash_aliases() {
   log_step "写入 bash aliases"
 
-  local bashrc="${AGENT_BASHRC:-${HOME:-/root}/.bashrc}"
+  local bashrc="$BASHRC_FILE"
   touch "$bashrc"
 
   sed -i -E \
@@ -395,9 +560,13 @@ prepare_config() {
     CONFIG_FINGERPRINT="$(printf '%s\0' sql-v1 "$CC_CONFIG_DIR" "$(sha256sum "$SQL_FILE" | cut -d ' ' -f1)" | sha256sum | cut -d ' ' -f1)"
   else
     if [[ -z "$WEBDAV_BASE_URL" || -z "$WEBDAV_USERNAME" || -z "$WEBDAV_PASSWORD" ]]; then
-      log_error "请设置 CC_SWITCH_WEBDAV_BASE_URL、CC_SWITCH_WEBDAV_USERNAME、CC_SWITCH_WEBDAV_PASSWORD，或使用 --sql-file / --skip-config"
+      log_error "WebDAV 需要地址、用户名和密码；--env 模式请设置 CC_SWITCH_WEBDAV_BASE_URL、CC_SWITCH_WEBDAV_USERNAME、CC_SWITCH_WEBDAV_PASSWORD"
       return 2
     fi
+    case "$WEBDAV_BASE_URL" in
+      http://?*|https://?*) ;;
+      *) log_error "WebDAV Base URL 必须使用 HTTP 或 HTTPS"; return 2 ;;
+    esac
     CONFIG_FINGERPRINT="$(printf '%s\0' webdav-v1 "$CC_CONFIG_DIR" "$WEBDAV_BASE_URL" "$WEBDAV_REMOTE_ROOT" "$WEBDAV_PROFILE" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" | sha256sum | cut -d ' ' -f1)"
   fi
 }
@@ -431,6 +600,9 @@ main() {
   check_linux
   check_commands
   umask 077
+  collect_configuration
+  prepare_process_env
+  prepare_config
   install -d -m 0700 "$STATE_DIR"
   exec 9>"${STATE_DIR}/install.lock"
   flock -n 9 || { log_error "另一个 Agent 安装正在运行"; return 1; }
@@ -438,8 +610,6 @@ main() {
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  prepare_process_env
-  prepare_config
   install_cc_switch
   sync_config
   install_claude
