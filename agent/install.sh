@@ -30,6 +30,7 @@ STATE_DIR=""
 CC_CONFIG_DIR=""
 BASHRC_FILE=""
 CONFIG_FINGERPRINT=""
+AGENT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log_step() {
   printf '\n\033[1;34m=== %s ===\033[0m\n' "$*"
@@ -455,7 +456,8 @@ configure_webdav() {
 
 import_sql_config() {
   log_step "从 SQL 文件导入 cc-switch 配置"
-  if ! config_command cc-switch config import "$SQL_FILE"; then
+  log_info "按所选 SQL 文件替换 cc-switch 配置；由 cc-switch 自动创建备份"
+  if ! config_command python3 "${AGENT_SCRIPT_DIR}/import_sql.py" "$SQL_FILE"; then
     log_error "SQL 配置导入失败"
     return 1
   fi
@@ -557,6 +559,8 @@ config_command() {
 prepare_config() {
   ((SKIP_CONFIG == 0)) || return 0
   if [[ -n "$SQL_FILE" ]]; then
+    command -v python3 >/dev/null 2>&1 || { log_error "本地 SQL 导入需要 python3"; return 2; }
+    [[ -r "${AGENT_SCRIPT_DIR}/import_sql.py" ]] || { log_error "缺少 agent/import_sql.py，请更新完整仓库"; return 2; }
     CONFIG_FINGERPRINT="$(printf '%s\0' sql-v1 "$CC_CONFIG_DIR" "$(sha256sum "$SQL_FILE" | cut -d ' ' -f1)" | sha256sum | cut -d ' ' -f1)"
   else
     if [[ -z "$WEBDAV_BASE_URL" || -z "$WEBDAV_USERNAME" || -z "$WEBDAV_PASSWORD" ]]; then

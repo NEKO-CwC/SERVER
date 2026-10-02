@@ -129,6 +129,16 @@ event = ':'.join(args[:3]) if args[:2] == ['config', 'webdav'] else ':'.join(arg
 with (root / 'calls').open('a') as out: out.write(event + '\\n')
 if event == 'config:webdav:set': (root / 'dav-args.json').write_text(json.dumps(args))
 if event == 'config:import': (root / 'sql-path').write_text(args[2])
+if event == 'config:import':
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print('Error: Prompt failed: Operation was interrupted by the user')
+        sys.exit(1)
+    if input('Continue with import? (y/N) ').strip().lower() != 'y':
+        print('Cancelled.')
+        sys.exit(0)
+    if os.environ.get('TEST_IMPORT_CANCEL') == '1':
+        print('Cancelled.')
+        sys.exit(0)
 if os.environ.get('TEST_FAIL_CONFIG') == event:
     print(os.environ['CC_SWITCH_WEBDAV_PASSWORD'])
     sys.exit(1)
@@ -136,6 +146,7 @@ if event in ('config:import', 'config:webdav:download'):
     directory = pathlib.Path(os.environ['CC_SWITCH_CONFIG_DIR'])
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'cc-switch.db').write_text('fixture database')
+    if event == 'config:import': print('Configuration imported from ' + args[2])
 ''')
         for tool in ("claude", "codex"):
             self.script(f"payload/{tool}", f"#!/bin/sh\necho '{tool} fixture'\n")
