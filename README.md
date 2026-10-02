@@ -39,7 +39,14 @@ bash agent/install.sh --sql-file /secure/cc-switch.sql
 bash agent/install.sh --skip-config      # 只安装工具，不导入配置
 ```
 
-`CC_SWITCH_WEBDAV_BASE_URL`、`CC_SWITCH_WEBDAV_USERNAME`、`CC_SWITCH_WEBDAV_PASSWORD` 必须由环境提供。`AGENT_PROXY_URL` 可选；未设置时保留当前 shell 的代理设置。
+`CC_SWITCH_WEBDAV_BASE_URL`、`CC_SWITCH_WEBDAV_USERNAME`、`CC_SWITCH_WEBDAV_PASSWORD` 必须由环境提供。
+
+下载代理有两种方式，通过 `.env` 中的 `AGENT_PROXY_MODE` 选择：
+
+- `env`（默认）：`AGENT_PROXY_URL` 会统一设置大小写 HTTP/HTTPS/ALL_PROXY；为空时保留 shell 已有的代理设置。
+- `ssh`：从 `AGENT_SSH_HOST`、`AGENT_SSH_USER`、`AGENT_SSH_PASSWORD` 建立临时 SSH SOCKS 隧道，使用 `socks5h://127.0.0.1:1080`。只有需要下载或 WebDAV 同步时才启动，安装成功、失败或收到终止信号后都会关闭。
+
+SSH 模式的依赖、首次主机密钥确认、端口配置和手动使用方法见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。密码仅保存在私有环境文件；脚本不配置远端 SSH 账户、不启动 TUN，也不修改系统路由。
 
 - 每次运行都检查工具的 `--version`；正常则跳过，缺失或不可运行则重新安装。
 - 配置成功后保存来源指纹；相同来源且本地数据库存在时跳过。SQL 内容或 WebDAV 参数变化会触发重新导入。
@@ -136,6 +143,8 @@ bash VPS/singbox/server/test/run-compose.sh
 ```
 
 单元/流程测试使用临时目录和模拟安装器，不调用真实账户或修改主机服务。Compose 集成测试需要支持 systemd、cgroup 与特权容器的 Linux Docker 环境；client 测试验证 TUN/bypass，server 测试验证本地与远程配置和失败保护。
+
+SSH 集成测试使用回环地址上的临时转发服务，验证真实 OpenSSH 的密码认证、SOCKS 下载、远端 DNS 与清理行为；需要 OpenSSH 和 Python `paramiko`（Debian/Ubuntu 包名 `python3-paramiko`），缺少时会明确跳过这组测试。
 
 ## 历史清理与公开
 

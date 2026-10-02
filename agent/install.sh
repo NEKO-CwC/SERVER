@@ -4,6 +4,13 @@ set -euo pipefail
 # Linux agent installer: cc-switch + WebDAV/SQL config + Claude Code + Codex.
 
 PROXY_URL="${AGENT_PROXY_URL:-}"
+PROXY_MODE="${AGENT_PROXY_MODE:-env}"
+SSH_PROXY_PASSWORD="${AGENT_SSH_PASSWORD:-}"
+# Only the SSH process/askpass helper receives this secret, never installers.
+unset AGENT_SSH_PASSWORD
+export -n SSH_PROXY_PASSWORD
+SSH_PROXY_PID=""
+SSH_PROXY_DIR=""
 SQL_FILE=""
 FORCE=0
 REFRESH_CONFIG=0
@@ -39,6 +46,13 @@ Options:
   --refresh-config  Sync/import again even if the same source already succeeded.
   --force         Reinstall tools. Configuration still needs --refresh-config.
   -h, --help       Show this help message.
+
+Proxy environment:
+  AGENT_PROXY_MODE=env  Use AGENT_PROXY_URL or inherited proxy variables (default).
+  AGENT_PROXY_MODE=ssh  Start an SSH SOCKS tunnel on the first network operation.
+  SSH mode requires AGENT_SSH_HOST, AGENT_SSH_USER, AGENT_SSH_PASSWORD.
+  Optional: AGENT_SSH_PORT=22, AGENT_SSH_SOCKS_PORT=1080,
+            AGENT_SSH_KNOWN_HOSTS_FILE (defaults to OpenSSH known_hosts).
 EOF
 }
 
@@ -101,7 +115,7 @@ check_linux() {
 
 check_commands() {
   local missing=()
-  for cmd in curl bash sh sed touch sha256sum cut install mktemp mv rm flock cat; do
+  for cmd in curl bash sh sed touch sha256sum cut install mktemp mv rm flock cat chmod sleep; do
     if ! command -v "$cmd" &>/dev/null; then
       missing+=("$cmd")
     fi
@@ -116,13 +130,116 @@ check_commands() {
 prepare_process_env() {
   log_step "配置当前安装进程环境"
 
-  if [[ -n "$PROXY_URL" ]]; then
-    export http_proxy="$PROXY_URL" https_proxy="$PROXY_URL"
-    export HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL"
-  fi
   export PATH="/root/.local/bin:${HOME:-/root}/.local/bin:$PATH"
+  case "$PROXY_MODE" in
+    env)
+      if [[ -n "$PROXY_URL" ]]; then export_proxy "$PROXY_URL"; fi
+      log_info "使用当前进程的代理环境变量"
+      ;;
+    ssh) log_info "SSH SOCKS 模式：需要联网时建立临时隧道" ;;
+    *) log_error "AGENT_PROXY_MODE 仅支持 env 或 ssh"; return 2 ;;
+  esac
+}
 
-  log_info "代理仅在当前安装进程中生效"
+export_proxy() {
+  export http_proxy="$1" https_proxy="$1" all_proxy="$1"
+  export HTTP_PROXY="$1" HTTPS_PROXY="$1" ALL_PROXY="$1"
+}
+
+ssh_proxy_control() {
+  ssh -F /dev/null -S "${SSH_PROXY_DIR}/control" -O check \
+    -p "${AGENT_SSH_PORT:-22}" -l "$AGENT_SSH_USER" "$AGENT_SSH_HOST" \
+    >/dev/null 2>&1
+}
+
+ensure_download_proxy() {
+  [[ "$PROXY_MODE" == ssh ]] || return 0
+  if [[ -n "$SSH_PROXY_PID" ]]; then
+    if kill -0 "$SSH_PROXY_PID" 2>/dev/null && ssh_proxy_control; then return 0; fi
+    log_error "SSH SOCKS 隧道已断开；停止安装，请修复连接后重试"
+    return 1
+  fi
+
+  local ssh_port="${AGENT_SSH_PORT:-22}" socks_port="${AGENT_SSH_SOCKS_PORT:-1080}"
+  local value deadline
+  if [[ -z "${AGENT_SSH_HOST:-}" || -z "${AGENT_SSH_USER:-}" || -z "$SSH_PROXY_PASSWORD" ]]; then
+    log_error "SSH 模式需要 AGENT_SSH_HOST、AGENT_SSH_USER、AGENT_SSH_PASSWORD"
+    return 2
+  fi
+  if [[ "$AGENT_SSH_HOST" == -* || "$AGENT_SSH_HOST" == *[!a-zA-Z0-9.:-]* ||
+        "$AGENT_SSH_USER" == -* || "$AGENT_SSH_USER" == *[!a-zA-Z0-9_.-]* ]]; then
+    log_error "SSH 主机或用户名格式无效"
+    return 2
+  fi
+  for value in "$ssh_port" "$socks_port"; do
+    if [[ ! "$value" =~ ^[0-9]{1,5}$ ]] || ((10#$value < 1 || 10#$value > 65535)); then
+      log_error "SSH 端口和 SOCKS 端口必须在 1–65535 之间"
+      return 2
+    fi
+  done
+  if [[ "$SSH_PROXY_PASSWORD" == *$'\n'* || "$SSH_PROXY_PASSWORD" == *$'\r'* ]]; then
+    log_error "SSH 密码不能包含换行符"
+    return 2
+  fi
+  command -v ssh >/dev/null 2>&1 || { log_error "SSH 模式需要 OpenSSH 客户端"; return 1; }
+  SSH_PROXY_DIR="$(mktemp -d /tmp/neko-agent-ssh.XXXXXX)" || return 1
+  cat >"${SSH_PROXY_DIR}/askpass" <<'ASKPASS'
+#!/bin/sh
+printf '%s\n' "$AGENT_SSH_PASSWORD"
+ASKPASS
+  chmod 0700 "${SSH_PROXY_DIR}/askpass" || return 1
+
+  local options=(
+    -F /dev/null -N -T -n -M -S "${SSH_PROXY_DIR}/control"
+    -D "127.0.0.1:${socks_port}" -p "$ssh_port" -l "$AGENT_SSH_USER"
+    -o ExitOnForwardFailure=yes -o ControlPersist=no
+    -o ConnectTimeout=15 -o ConnectionAttempts=1
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=2
+    -o PreferredAuthentications=password -o PubkeyAuthentication=no
+    -o KbdInteractiveAuthentication=no -o NumberOfPasswordPrompts=1
+    -o StrictHostKeyChecking=yes -o UpdateHostKeys=no
+  )
+  if [[ -n "${AGENT_SSH_KNOWN_HOSTS_FILE:-}" ]]; then
+    [[ -r "$AGENT_SSH_KNOWN_HOSTS_FILE" ]] || { log_error "SSH known_hosts 文件不可读"; return 2; }
+    options+=(-o "UserKnownHostsFile=\"${AGENT_SSH_KNOWN_HOSTS_FILE}\"")
+  fi
+  log_info "建立临时 SSH SOCKS 隧道（仅监听 127.0.0.1:${socks_port}）"
+  AGENT_SSH_PASSWORD="$SSH_PROXY_PASSWORD" \
+    SSH_ASKPASS="${SSH_PROXY_DIR}/askpass" SSH_ASKPASS_REQUIRE=force \
+    ssh "${options[@]}" "$AGENT_SSH_HOST" \
+    </dev/null 9>&- >"${STATE_DIR}/ssh-proxy.log" 2>&1 &
+  SSH_PROXY_PID=$!
+  deadline=$((SECONDS + 20))
+  while ((SECONDS < deadline)); do
+    if ! kill -0 "$SSH_PROXY_PID" 2>/dev/null; then
+      log_error "SSH 隧道启动失败；检查认证、主机密钥和端口。详情：${STATE_DIR}/ssh-proxy.log"
+      return 1
+    fi
+    if [[ -S "${SSH_PROXY_DIR}/control" ]] && ssh_proxy_control; then
+      export_proxy "socks5h://127.0.0.1:${socks_port}"
+      log_info "SSH SOCKS 隧道已就绪，下载使用远程 DNS 解析"
+      return 0
+    fi
+    sleep 0.1
+  done
+  log_error "等待 SSH 隧道启动超时；详情：${STATE_DIR}/ssh-proxy.log"
+  return 1
+}
+
+cleanup_proxy() {
+  local ssh_result=0
+  if [[ -n "$SSH_PROXY_PID" ]]; then
+    if kill -0 "$SSH_PROXY_PID" 2>/dev/null; then
+      if ! kill "$SSH_PROXY_PID" 2>/dev/null; then log_error "未能发送 SSH 停止信号"; fi
+    fi
+    wait "$SSH_PROXY_PID" || ssh_result=$?
+    log_info "本次安装的 SSH 隧道已结束（退出码 ${ssh_result}）"
+    SSH_PROXY_PID=""
+  fi
+  if [[ -n "$SSH_PROXY_DIR" ]]; then
+    rm -rf -- "$SSH_PROXY_DIR"
+    SSH_PROXY_DIR=""
+  fi
 }
 
 install_cc_switch() {
@@ -146,6 +263,7 @@ install_cc_switch() {
 
 configure_webdav() {
   log_step "配置 cc-switch WebDAV"
+  ensure_download_proxy || return $?
 
   if ! config_command cc-switch config webdav set \
     --base-url "$WEBDAV_BASE_URL" \
@@ -250,6 +368,7 @@ tool_ready() {
 
 run_installer() {
   local installer_file result=0
+  ensure_download_proxy || return $?
   installer_file="$(mktemp "${STATE_DIR}/installer.XXXXXX")" || return 1
   if curl -fsSL --connect-timeout 20 --max-time 180 "$1" -o "$installer_file"; then
     "$2" "$installer_file" || result=$?
@@ -315,6 +434,10 @@ main() {
   install -d -m 0700 "$STATE_DIR"
   exec 9>"${STATE_DIR}/install.lock"
   flock -n 9 || { log_error "另一个 Agent 安装正在运行"; return 1; }
+  trap cleanup_proxy EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   prepare_process_env
   prepare_config
   install_cc_switch

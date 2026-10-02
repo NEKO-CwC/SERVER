@@ -35,10 +35,13 @@ class ShellTests(unittest.TestCase):
         return result
 
 
-class AgentTests(ShellTests):
+class AgentFixture(ShellTests):
     def setUp(self):
         super().setUp()
         self.env.update(
+            AGENT_PROXY_MODE="env",
+            AGENT_PROXY_URL="",
+            AGENT_SSH_PASSWORD="",
             AGENT_INSTALL_STATE_DIR=str(self.root / "state"),
             AGENT_BASHRC=str(self.root / "bashrc"),
             CC_SWITCH_CONFIG_DIR=str(self.root / "config"),
@@ -88,6 +91,8 @@ main "$@"
     def calls(self):
         return (self.root / "calls").read_text().splitlines()
 
+
+class AgentTests(AgentFixture):
     def test_resume_after_late_download_failure(self):
         self.env["TEST_FAIL_DOWNLOAD"] = "codex"
         self.run_agent(ok=False)
