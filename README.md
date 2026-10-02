@@ -52,7 +52,7 @@ bash agent/install.sh --env /secure/agent.env # 加载指定环境文件，不�
 
 环境模式下的代理由 `AGENT_PROXY_MODE` 选择：`none` 为直连；`env`（默认）使用 `AGENT_PROXY_URL`，为空时继承已设置的 HTTP/HTTPS/ALL_PROXY；`ssh` 使用 `AGENT_SSH_HOST`、`AGENT_SSH_USER`、`AGENT_SSH_PASSWORD` 建立临时隧道。两种输入方式都复用相同的代理与安装逻辑。
 
-SSH 只在需要下载或 WebDAV 同步时启动，安装成功、失败或终止后关闭。依赖、主机密钥确认与手动使用方法见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。脚本不配置远端账户、不启用 TUN，也不修改路由。
+SSH 只在需要下载或 WebDAV 同步时启动，安装成功、失败或终止后关闭。默认仅用密码连接，不预先登记、不保存或校验服务器主机密钥；也可交互选择首次自动登记（`accept-new`）或严格校验（`yes`）。环境模式使用 `AGENT_SSH_HOST_KEY_CHECKING` 选择，默认 `no`。不校验时无法确认服务器身份。详细设置见 [SSH_SOCKS_PROXY.md](SSH_SOCKS_PROXY.md)。脚本不配置远端账户、不启用 TUN，也不修改路由。
 
 保留以下显式选项：
 

@@ -12,6 +12,7 @@ SSH_PROXY_USER=""
 SSH_PROXY_PASSWORD=""
 SSH_PROXY_PORT=22
 SSH_PROXY_SOCKS_PORT=1080
+SSH_PROXY_HOST_KEY_CHECKING=no
 SSH_PROXY_KNOWN_HOSTS_FILE=""
 SSH_PROXY_PID=""
 SSH_PROXY_DIR=""
@@ -67,7 +68,8 @@ Proxy environment:
   AGENT_PROXY_MODE=ssh  Start an SSH SOCKS tunnel on the first network operation.
   SSH mode requires AGENT_SSH_HOST, AGENT_SSH_USER, AGENT_SSH_PASSWORD.
   Optional: AGENT_SSH_PORT=22, AGENT_SSH_SOCKS_PORT=1080,
-            AGENT_SSH_KNOWN_HOSTS_FILE (defaults to OpenSSH known_hosts).
+            AGENT_SSH_HOST_KEY_CHECKING=no|accept-new|yes (default: no),
+            AGENT_SSH_KNOWN_HOSTS_FILE (used only with accept-new or yes).
 
 cc-switch environment:
   CC_SWITCH_CONFIG_SOURCE=dav  Download WebDAV configuration (default).
@@ -133,6 +135,7 @@ load_environment_config() {
   SSH_PROXY_PASSWORD="${AGENT_SSH_PASSWORD:-}"
   SSH_PROXY_PORT="${AGENT_SSH_PORT:-22}"
   SSH_PROXY_SOCKS_PORT="${AGENT_SSH_SOCKS_PORT:-1080}"
+  SSH_PROXY_HOST_KEY_CHECKING="${AGENT_SSH_HOST_KEY_CHECKING:-no}"
   SSH_PROXY_KNOWN_HOSTS_FILE="${AGENT_SSH_KNOWN_HOSTS_FILE:-}"
   CONFIG_SOURCE="${CC_SWITCH_CONFIG_SOURCE:-dav}"
   SQL_FILE="${CC_SWITCH_SQL_FILE:-}"
@@ -196,7 +199,18 @@ prompt_configuration() {
         prompt_value SSH_PROXY_PASSWORD "SSH 密码" "" 1 1
         prompt_port SSH_PROXY_PORT "SSH 端口" 22
         prompt_port SSH_PROXY_SOCKS_PORT "本地 SOCKS 端口" 1080
-        prompt_value SSH_PROXY_KNOWN_HOSTS_FILE "known_hosts 文件（留空使用 OpenSSH 默认文件）" "" 0
+        while true; do
+          prompt_value choice "主机密钥校验：1) 不校验、不登记  2) 首次自动登记  3) 严格校验" 1
+          case "$choice" in
+            1) SSH_PROXY_HOST_KEY_CHECKING=no; break ;;
+            2) SSH_PROXY_HOST_KEY_CHECKING=accept-new; break ;;
+            3) SSH_PROXY_HOST_KEY_CHECKING=yes; break ;;
+            *) log_error "请选择 1、2 或 3" ;;
+          esac
+        done
+        if [[ "$SSH_PROXY_HOST_KEY_CHECKING" != no ]]; then
+          prompt_value SSH_PROXY_KNOWN_HOSTS_FILE "known_hosts 文件（留空使用 OpenSSH 默认文件）" "" 0
+        fi
         break ;;
       *) log_error "请选择 1、2 或 3" ;;
     esac
@@ -363,12 +377,36 @@ ASKPASS
     -o ServerAliveInterval=15 -o ServerAliveCountMax=2
     -o PreferredAuthentications=password -o PubkeyAuthentication=no
     -o KbdInteractiveAuthentication=no -o NumberOfPasswordPrompts=1
-    -o StrictHostKeyChecking=yes -o UpdateHostKeys=no
+    -o UpdateHostKeys=no
   )
-  if [[ -n "$SSH_PROXY_KNOWN_HOSTS_FILE" ]]; then
-    [[ -r "$SSH_PROXY_KNOWN_HOSTS_FILE" ]] || { log_error "SSH known_hosts 文件不可读"; return 2; }
-    options+=(-o "UserKnownHostsFile=\"${SSH_PROXY_KNOWN_HOSTS_FILE}\"")
-  fi
+  case "$SSH_PROXY_HOST_KEY_CHECKING" in
+    no)
+      options+=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null)
+      ;;
+    accept-new)
+      local known_hosts="${SSH_PROXY_KNOWN_HOSTS_FILE:-${HOME:-/root}/.ssh/known_hosts}"
+      local known_hosts_dir
+      known_hosts_dir="$(dirname "$known_hosts")" || return 1
+      if [[ ! -d "$known_hosts_dir" ]]; then install -d -m 0700 "$known_hosts_dir" || return 1; fi
+      if [[ ! -e "$known_hosts" ]]; then
+        touch "$known_hosts" || return 1
+        chmod 0600 "$known_hosts" || return 1
+      fi
+      if [[ ! -f "$known_hosts" || ! -r "$known_hosts" || ! -w "$known_hosts" ]]; then
+        log_error "accept-new 模式需要可读写的 known_hosts 普通文件"
+        return 2
+      fi
+      options+=(-o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\"${known_hosts}\"")
+      ;;
+    yes)
+      options+=(-o StrictHostKeyChecking=yes)
+      if [[ -n "$SSH_PROXY_KNOWN_HOSTS_FILE" ]]; then
+        [[ -r "$SSH_PROXY_KNOWN_HOSTS_FILE" ]] || { log_error "SSH known_hosts 文件不可读"; return 2; }
+        options+=(-o "UserKnownHostsFile=\"${SSH_PROXY_KNOWN_HOSTS_FILE}\"")
+      fi
+      ;;
+    *) log_error "AGENT_SSH_HOST_KEY_CHECKING 仅支持 no、accept-new 或 yes"; return 2 ;;
+  esac
   log_info "建立临时 SSH SOCKS 隧道（仅监听 127.0.0.1:${socks_port}）"
   AGENT_SSH_PASSWORD="$SSH_PROXY_PASSWORD" \
     SSH_ASKPASS="${SSH_PROXY_DIR}/askpass" SSH_ASKPASS_REQUIRE=force \
