@@ -1,0 +1,21 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2-in",
+      "listen": "::",
+      "listen_port": 443,
+      "users": [
+        { "name": "example", "password": "REPLACE_WITH_A_UNIQUE_PASSWORD" }
+      ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/etc/sing-box-server/tls/server.crt",
+        "key_path": "/etc/sing-box-server/tls/server.key"
+      }
+    }
+  ],
+  "outbounds": [ { "type": "direct", "tag": "direct" } ],
+  "route": { "final": "direct" }
+}
