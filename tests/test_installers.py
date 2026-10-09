@@ -326,6 +326,37 @@ stage_config "$TEST_ROOT/binary" https://subscription.example.invalid
 ''', ok=False)
         self.assertEqual((self.root / "config/config.json").read_text(), '{"old":true}')
 
+    def test_client_reports_old_validator_and_preserves_installation(self):
+        old_binary = self.script("old-client", '''#!/usr/bin/env python3
+import sys
+if sys.argv[1] == 'version': print('sing-box version 1.13.15')
+else:
+    print('route.default_http_client: json: unknown field "default_http_client"', file=sys.stderr)
+    sys.exit(1)
+''')
+        result = self.bash('''source VPS/singbox/client/install.sh
+SINGBOX_VERSION=1.13.15
+TMP_DIR="$TEST_ROOT/stage"
+CONFIG_FILE="$TEST_ROOT/config/config.json"
+INSTALL_BIN="$TEST_ROOT/old-client"
+download_file() { printf '{"route":{"default_http_client":"rules"},"http_clients":[{"tag":"rules"}]}' >"$1"; }
+stage_config "$INSTALL_BIN" https://subscription.example.invalid
+''', ok=False)
+        self.assertIn("Validating the downloaded configuration with sing-box version 1.13.15", result.stdout)
+        self.assertIn("require sing-box 1.14.0 or newer", result.stderr)
+        self.assertIn("SINGBOX_VERSION override", result.stderr)
+        self.assertEqual((self.root / "config/config.json").read_text(), '{"old":true}')
+        self.assertIn("1.13.15", old_binary.read_text())
+
+    def test_client_generic_validation_failure_does_not_report_version_mismatch(self):
+        result = self.bash('''source VPS/singbox/client/install.sh
+TMP_DIR="$TEST_ROOT/stage"
+download_file() { printf 'invalid' >"$1"; }
+stage_config "$TEST_ROOT/binary" https://subscription.example.invalid
+''', ok=False)
+        self.assertIn("Configuration validation failed", result.stderr)
+        self.assertNotIn("require sing-box 1.14.0", result.stderr)
+
 
 class RepositoryTests(unittest.TestCase):
     def test_shell_syntax(self):

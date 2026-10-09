@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.3}"
+DEFAULT_CLIENT_VERSION="1.14.3"
+SINGBOX_VERSION="${SINGBOX_VERSION:-${DEFAULT_CLIENT_VERSION}}"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
 STARTUP_STABILITY_SECONDS=5
 
@@ -151,12 +152,26 @@ stage_config() {
   local staged_bin="$1"
   local subscription_url="$2"
   local staged_config="${TMP_DIR}/config.json"
+  local version_output
+  local version_header
+
+  version_output="$("${staged_bin}" version)"
+  version_header="${version_output%%$'\n'*}"
 
   info "Downloading the subscription with User-Agent: sing-box/${SINGBOX_VERSION}..."
   download_file "${staged_config}" "${subscription_url}" --user-agent "sing-box/${SINGBOX_VERSION}"
 
-  info "Validating the downloaded configuration..."
-  "${staged_bin}" check -c "${staged_config}"
+  info "Validating the downloaded configuration with ${version_header} (${staged_bin})..."
+  if ! "${staged_bin}" check -c "${staged_config}"; then
+    if [[ "${version_header}" =~ ^sing-box\ version\ ([0-9]+)\.([0-9]+)\. ]] &&
+       ((BASH_REMATCH[1] < 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] < 14))) &&
+       grep -Eq '"(default_http_client|http_clients)"[[:space:]]*:' "${staged_config}"; then
+      error "This subscription uses HTTP client fields that require sing-box 1.14.0 or newer."
+      error "The validator is ${version_header}; update the client installer and remove any older SINGBOX_VERSION override from the environment or --env file."
+    fi
+    error "Configuration validation failed; the installed binary and configuration were not changed."
+    return 1
+  fi
   STAGED_CONFIG="${staged_config}"
 }
 
@@ -290,8 +305,9 @@ main() {
   if ((USE_ENV)); then
     STATE_DIR="${INSTALL_PROXY_STATE_DIR:-$STATE_DIR}"
   else
-    SINGBOX_VERSION=1.14.3; DOWNLOAD_PROXY=""
+    SINGBOX_VERSION="${DEFAULT_CLIENT_VERSION}"; DOWNLOAD_PROXY=""
   fi
+  info "Client installer target: sing-box ${SINGBOX_VERSION} (default ${DEFAULT_CLIENT_VERSION})."
   subscription_url="$(resolve_subscription_url)"
   install_dependencies
   require_commands

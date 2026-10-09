@@ -112,6 +112,8 @@ Environment=INGRESS_TCP_PORTS=80,443,8443
 
 该模板含 1.14 新字段，使用它的客户端也需要升级内核。版本依据：[1.14.3 稳定版](https://github.com/SagerNet/sing-box/releases/tag/v1.14.3)、[官方迁移说明](https://sing-box.sagernet.org/migration/)。
 
+若出现 `route.default_http_client: json: unknown field "default_http_client"`，校验配置的内核通常仍低于 1.14。先确认服务器已取得包含 1.14.3 升级的安装器，再检查环境或 `--env` 文件是否固定了旧 `SINGBOX_VERSION`。安装日志会显示目标版本，以及实际执行配置校验的二进制版本和路径；此类校验失败不会替换现有二进制或配置。仅更新订阅模板、没有更新安装器时，旧客户端仍会收到无法识别的新字段。
+
 ## sing-box server
 
 要求 root、运行中的 systemd，以及 curl、tar、gzip、coreutils、util-linux。默认版本为 `1.13.13`。服务端只运行给定配置，不使用客户端订阅逻辑，也不安装 bypass。

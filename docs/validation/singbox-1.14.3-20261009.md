@@ -62,3 +62,11 @@ Anthropic 根路径的 404 用于证明 TLS 和 HTTP 连通，不代表 API 鉴�
 Kubernetes/CNI 的跨节点、DSR、多公网出口及现有 mark 位冲突未验证，不能将本次 Docker/DNAT 结果推广为所有 K8s 部署均已适配。
 
 上游参考：[1.14.3 稳定版](https://github.com/SagerNet/sing-box/releases/tag/v1.14.3)、[迁移说明](https://sing-box.sagernet.org/migration/)。
+
+## 线上订阅版本错配复现
+
+用户随后提供了实际订阅地址。以 `sing-box/1.13.15` 和 `sing-box/1.14.3` 请求，均返回同一份 8256 字节配置，含 `route.default_http_client` 和顶层 `http_clients`；订阅端没有按内核版本降级字段。
+
+在 medical 的另一独立容器中使用官方二进制验证该线上响应：1.13.15 原样复现 `route.default_http_client: json: unknown field "default_http_client"`，1.14.3 校验通过。此时仓库远端 `main` 仍停在升级前提交，说明只更新线上模板、仍从旧仓库取得安装器会导致错配。
+
+安装器已补充目标版本、实际校验内核版本与路径的日志；旧内核拒绝 1.14 HTTP 字段时明确提示更新安装器、检查 `SINGBOX_VERSION` 覆盖值，并保留已有安装。补充回归后，隔离容器内 **57 项测试全部通过，无跳过项**。
