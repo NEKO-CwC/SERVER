@@ -20,8 +20,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
 
-        if self.headers.get("User-Agent") != "sing-box":
-            self.send_error(403, "sing-box User-Agent required")
+        if self.headers.get("User-Agent") != "sing-box/1.14.3":
+            self.send_error(403, "versioned sing-box User-Agent required")
             return
 
         STATE.mkdir(parents=True, exist_ok=True)

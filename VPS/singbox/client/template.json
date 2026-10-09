@@ -1,0 +1,469 @@
+{
+    "dns": {
+        "servers": [
+            {
+                "type": "udp",
+                "tag": "ali-dns",
+                "server": "223.5.5.5",
+                "server_port": 53
+            },
+            {
+                "type": "https",
+                "tag": "dns-node",
+                "server": "1.12.12.12",
+                "server_port": 443,
+                "path": "/dns-query",
+                "tls": {
+                    "enabled": true,
+                    "server_name": "doh.pub"
+                }
+            },
+            {
+                "type": "https",
+                "tag": "cf-dns",
+                "server": "1.1.1.1",
+                "server_port": 443,
+                "path": "/dns-query",
+                "detour": "节点选择",
+                "tls": {
+                    "enabled": true,
+                    "server_name": "cloudflare-dns.com"
+                }
+            },
+            {
+                "type": "fakeip",
+                "tag": "fakeip",
+                "inet4_range": "198.18.0.0/15"
+            },
+            {
+                "type": "local",
+                "tag": "dns-local"
+            },
+            {
+                "type": "udp",
+                "tag": "netbird-cluster-dns",
+                "server": "10.43.0.10",
+                "server_port": 53
+            },
+            {
+                "type": "udp",
+                "tag": "netbird-dns",
+                "server": "10.255.121.186",
+                "server_port": 53
+            }
+        ],
+        "rules": [
+            {
+                "domain_suffix": [
+                    "284072.xyz",
+                    "220181.xyz"
+                ],
+                "action": "route",
+                "server": "dns-node"
+            },
+            {
+                "domain": [
+                    "rancher.prod.ncuos.com"
+                ],
+                "query_type": "A",
+                "action": "predefined",
+                "answer": [
+                    "rancher.prod.ncuos.com. IN A 10.43.177.42"
+                ]
+            },
+            {
+                "domain": [
+                    "derp.ncuos.com"
+                ],
+                "action": "route",
+                "server": "ali-dns"
+            },
+            {
+                "domain": [
+                    "ori.ncuos.com"
+                ],
+                "action": "route",
+                "server": "ali-dns"
+            },
+            {
+                "domain_suffix": [
+                    "cluster.local"
+                ],
+                "action": "route",
+                "server": "netbird-cluster-dns"
+            },
+            {
+                "domain_suffix": [
+                    "ncuos.com",
+                    "ncuhome.club"
+                ],
+                "action": "route",
+                "server": "netbird-dns"
+            },
+            {
+                "domain_suffix": [
+                    "edu.cn"
+                ],
+                "action": "route",
+                "server": "ali-dns"
+            },
+            {
+                "rule_set": [
+                    "sukka-game-download",
+                    "steamcn",
+                    "steamcn-meta"
+                ],
+                "action": "route",
+                "server": "ali-dns"
+            },
+            {
+                "rule_set": "ai-proxy-vpsdance",
+                "query_type": "A",
+                "action": "route",
+                "server": "fakeip"
+            },
+            {
+                "rule_set": "ai-proxy-vpsdance",
+                "action": "route",
+                "server": "cf-dns"
+            },
+            {
+                "rule_set": "proxy-domains",
+                "query_type": "A",
+                "action": "route",
+                "server": "fakeip"
+            },
+            {
+                "rule_set": "proxy-domains",
+                "action": "route",
+                "server": "cf-dns"
+            },
+            {
+                "query_type": "A",
+                "action": "route",
+                "server": "ali-dns"
+            },
+            {
+                "action": "route",
+                "server": "ali-dns"
+            }
+        ],
+        "final": "ali-dns",
+        "strategy": "ipv4_only"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "path": "cache.db",
+            "cache_id": "cache_db",
+            "store_fakeip": true
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9090",
+            "external_ui": "ui",
+            "external_ui_download_url": "https://ghfast.top/https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
+            "external_ui_download_detour": "direct"
+        }
+    },
+    "inbounds": [
+        {
+            "type": "direct",
+            "tag": "dns-in",
+            "listen": "127.0.0.1",
+            "listen_port": 53
+        },
+        {
+            "type": "mixed",
+            "tag": "mixed-in",
+            "listen": "127.0.0.1",
+            "listen_port": 7890
+        },
+        {
+            "type": "socks",
+            "tag": "socks-in",
+            "listen": "127.0.0.1",
+            "listen_port": 7891
+        },
+        {
+            "type": "http",
+            "tag": "http-in",
+            "listen": "127.0.0.1",
+            "listen_port": 7892
+        },
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "mtu": 1900,
+            "address": "172.19.0.1/30",
+            "auto_route": true,
+            "strict_route": true,
+            "route_exclude_address": [
+                "104.224.154.181/32",
+                "182.92.93.16/32",
+                "10.0.0.0/8",
+                "172.16.0.0/12",
+                "192.168.0.0/16",
+                "169.254.0.0/16",
+                "224.0.0.0/4",
+                "255.255.255.255/32",
+                "fc00::/7",
+                "fe80::/10"
+            ],
+            "stack": "mixed"
+        }
+    ],
+    "outbounds": [
+        {
+            "tag": "节点选择",
+            "type": "selector",
+            "default": "自动选择",
+            "outbounds": [
+                "自动选择"
+            ]
+        },
+        {
+            "type": "selector",
+            "tag": "AI",
+            "outbounds": [
+                "自动选择",
+                "节点选择"
+            ],
+            "default": "自动选择"
+        },
+        {
+            "tag": "direct",
+            "type": "direct"
+        },
+        {
+            "tag": "NetBird",
+            "type": "direct"
+        },
+        {
+            "tag": "自动选择",
+            "type": "urltest",
+            "outbounds": []
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "inbound": "dns-in",
+                "action": "hijack-dns"
+            },
+            {
+                "type": "logical",
+                "mode": "or",
+                "rules": [
+                    {
+                        "protocol": "dns"
+                    },
+                    {
+                        "port": 53
+                    }
+                ],
+                "action": "hijack-dns"
+            },
+            {
+                "domain_suffix": [
+                    "284072.xyz",
+                    "220181.xyz"
+                ],
+                "action": "resolve",
+                "server": "dns-node",
+                "strategy": "ipv4_only"
+            },
+            {
+                "domain_suffix": [
+                    "derp.ncuos.com"
+                ],
+                "outbound": "direct"
+            },
+            {
+                "domain": [
+                    "ori.ncuos.com"
+                ],
+                "outbound": "direct"
+            },
+            {
+                "domain": [
+                    "rancher.prod.ncuos.com"
+                ],
+                "action": "route",
+                "outbound": "NetBird",
+                "override_address": "10.43.177.42"
+            },
+            {
+                "domain_suffix": [
+                    "edu.cn"
+                ],
+                "outbound": "direct"
+            },
+            {
+                "domain_suffix": [
+                    "cluster.local",
+                    "ncuos.com",
+                    "ncuhome.club"
+                ],
+                "outbound": "NetBird"
+            },
+            {
+                "ip_cidr": [
+                    "10.43.0.0/16",
+                    "10.43.0.10/32",
+                    "10.43.177.42/32",
+                    "10.244.0.0/16",
+                    "10.253.0.0/16",
+                    "10.254.0.0/16",
+                    "10.255.0.0/16",
+                    "222.204.0.0/18",
+                    "222.204.28.18/32",
+                    "222.204.64.0/19",
+                    "222.204.95.226/32"
+                ],
+                "outbound": "NetBird"
+            },
+            {
+                "rule_set": "geoip-private",
+                "outbound": "direct"
+            },
+            {
+                "rule_set": "override-直连",
+                "outbound": "direct"
+            },
+            {
+                "rule_set": [
+                    "sukka-game-download",
+                    "steamcn",
+                    "steamcn-meta"
+                ],
+                "outbound": "direct"
+            },
+            {
+                "rule_set": "ai-proxy-vpsdance",
+                "outbound": "AI"
+            },
+            {
+                "rule_set": "proxy-domains",
+                "outbound": "节点选择"
+            },
+            {
+                "action": "resolve",
+                "server": "ali-dns",
+                "strategy": "ipv4_only"
+            },
+            {
+                "rule_set": "geoip-cn",
+                "outbound": "direct"
+            },
+            {
+                "rule_set": "geoip-hk",
+                "outbound": "direct"
+            }
+        ],
+        "rule_set": [
+            {
+                "type": "inline",
+                "tag": "geoip-private",
+                "rules": [
+                    {
+                        "ip_cidr": [
+                            "10.0.0.0/8",
+                            "172.16.0.0/12",
+                            "192.168.0.0/16",
+                            "127.0.0.0/8",
+                            "169.254.0.0/16",
+                            "::1/128",
+                            "fc00::/7",
+                            "fe80::/10"
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "remote",
+                "tag": "proxy-domains",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs",
+                "update_interval": "24h"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
+                "update_interval": "24h"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-hk",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/hk.srs",
+                "update_interval": "24h"
+            },
+            {
+                "type": "remote",
+                "tag": "sukka-game-download",
+                "format": "source",
+                "url": "https://ruleset.skk.moe/sing-box/domainset/game-download.json",
+                "update_interval": "24h"
+            },
+            {
+                "type": "remote",
+                "tag": "steamcn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/DDCHlsq/sing-ruleset/ruleset/steamcn.srs",
+                "update_interval": "24h"
+            },
+            {
+                "type": "remote",
+                "tag": "steamcn-meta",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/steam@cn.srs",
+                "update_interval": "24h"
+            },
+            {
+                "tag": "ai-proxy-vpsdance",
+                "type": "remote",
+                "format": "source",
+                "url": "https://raw.githubusercontent.com/VPSDance/ai-proxy-rules/main/rules/sing-box/all.json",
+                "update_interval": "24h"
+            },
+            {
+                "type": "inline",
+                "tag": "override-直连",
+                "rules": [
+                    {
+                        "ip_cidr": [
+                            "104.224.154.181/32",
+                            "182.92.93.16/32",
+                            "47.79.145.31/32",
+                            "104.168.88.140/32",
+                            "152.42.245.67/32"
+                        ]
+                    },
+                    {
+                        "domain_suffix": [
+                            "neko-dashboard.com",
+                            "284072.xyz",
+                            "neko-cwc.com",
+                            "220181.xyz"
+                        ]
+                    }
+                ]
+            }
+        ],
+        "final": "节点选择",
+        "auto_detect_interface": true,
+        "default_domain_resolver": "dns-node",
+        "default_http_client": "rule-set-download"
+    },
+    "http_clients": [
+        {
+            "tag": "rule-set-download",
+            "detour": "节点选择"
+        }
+    ]
+}

@@ -28,7 +28,7 @@ assert_file "${CONFIG_DIR}/config.json"
 assert_file "${CONFIG_DIR}/bypass.sh"
 assert_file /etc/systemd/system/sing-box-client-bypass.service
 assert_file /etc/systemd/system/sing-box-client.service
-/usr/local/lib/sing-box-client/sing-box version | grep -F "sing-box version 1.13.15"
+/usr/local/lib/sing-box-client/sing-box version | grep -F "sing-box version 1.14.3"
 [[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == 600 ]]
 [[ "$(stat -c '%a' "${CONFIG_DIR}/bypass.sh")" == 755 ]]
 cmp -s "${WORKSPACE}/bypass.sh" "${CONFIG_DIR}/bypass.sh"
@@ -43,7 +43,7 @@ grep -F 'ExecStopPost=/etc/sing-box-client/bypass.sh cleanup' /etc/systemd/syste
 [[ "$(readlink -f "/proc/$(systemctl show -p MainPID --value sing-box-client.service)/cwd")" == /var/lib/sing-box-client ]]
 assert_file /var/lib/sing-box-client/cache.db
 assert_file /subscription-state/user-agent.ok
-[[ "$(cat /subscription-state/user-agent.ok)" == sing-box ]]
+[[ "$(cat /subscription-state/user-agent.ok)" == sing-box/1.14.3 ]]
 
 echo "[verify] simulating Tailscale routes and checking marked SSH paths"
 ip link add tailscale0 type dummy 2>/dev/null || true
@@ -64,6 +64,9 @@ if ip route get 100.99.88.77 | grep -Fq 'dev tailscale0'; then
 fi
 ip -6 route get fd7a:115c:a1e0::53 mark 0x100 | grep -F 'dev tailscale0'
 nft list table inet singbox_client_bypass | grep -Eq '[[:space:]]tcp sport 22[[:space:]]'
+ip -4 rule show | grep -Eq '^5000:[[:space:]]+from all fwmark 0x100/0x100 lookup main$'
+ip -6 rule show | grep -Eq '^5000:[[:space:]]+from all fwmark 0x100/0x100 lookup main$'
+nft list chain inet singbox_client_bypass prerouting | grep -F 'ct mark &'
 
 echo "[verify] checking sing-box-owned cleanup and restart"
 systemctl stop sing-box-client.service
@@ -79,6 +82,12 @@ if ip -4 rule show | grep -Eq '^4004:[[:space:]]+from all to 100\.64\.0\.0/10 lo
   echo "bypass IPv4 rule was not cleaned up" >&2
   exit 1
 fi
+for family in -4 -6; do
+  if ip "${family}" rule show | grep -Eq '^5000:[[:space:]]+from all fwmark 0x100/0x100 lookup main$'; then
+    echo "bypass ${family} ingress return rule was not cleaned up" >&2
+    exit 1
+  fi
+done
 systemctl start sing-box-client.service
 assert_active sing-box-client-bypass.service
 assert_active sing-box-client.service

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.15}"
+SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.3}"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
 STARTUP_STABILITY_SECONDS=5
 
@@ -152,8 +152,8 @@ stage_config() {
   local subscription_url="$2"
   local staged_config="${TMP_DIR}/config.json"
 
-  info "Downloading the subscription with User-Agent: sing-box..."
-  download_file "${staged_config}" "${subscription_url}" --user-agent sing-box
+  info "Downloading the subscription with User-Agent: sing-box/${SINGBOX_VERSION}..."
+  download_file "${staged_config}" "${subscription_url}" --user-agent "sing-box/${SINGBOX_VERSION}"
 
   info "Validating the downloaded configuration..."
   "${staged_bin}" check -c "${staged_config}"
@@ -290,7 +290,7 @@ main() {
   if ((USE_ENV)); then
     STATE_DIR="${INSTALL_PROXY_STATE_DIR:-$STATE_DIR}"
   else
-    SINGBOX_VERSION=1.13.15; DOWNLOAD_PROXY=""
+    SINGBOX_VERSION=1.14.3; DOWNLOAD_PROXY=""
   fi
   subscription_url="$(resolve_subscription_url)"
   install_dependencies

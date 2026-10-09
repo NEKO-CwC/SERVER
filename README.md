@@ -8,7 +8,7 @@ Linux VPS 基础初始化、Agent 安装，以及独立的 sing-box client/serve
 | --- | --- |
 | `agent/install.sh` | 安装 cc-switch、Claude Code、Codex，导入配置并写入 cc/cx aliases |
 | `VPS/ONE_STEP_INIT.sh` | 系统包、Docker、网络设置、仓库与 MOTD 初始化 |
-| `VPS/singbox/client/install.sh` | 获取 Xboard 订阅配置，部署客户端与 SSH/Tailscale bypass |
+| `VPS/singbox/client/install.sh` | 获取 Xboard 订阅配置，部署客户端与 SSH/HTTP/HTTPS/Tailscale bypass |
 | `VPS/singbox/server/install.sh` | 从本地文件或远程文件地址部署服务端 |
 | `agent/api-rescue-v1.sh` | 临时 API DNS 映射，退出时清理 |
 | `with-proxy.sh` | 为 Git、VPS 初始化等命令提供交互或环境配置的临时代理 |
@@ -87,13 +87,30 @@ bash VPS/singbox/client/install.sh # 交互选择代理并输入订阅 URL
 bash VPS/singbox/client/install.sh --env .env # 读取代理和 SUBSCRIPTION_URL
 ```
 
-订阅请求使用 `User-Agent: sing-box`，Xboard 必须返回可直接运行的完整 JSON。每次执行都会获取并校验配置，校验成功后备份旧配置、替换并重启。已安装且版本匹配的二进制会复用。默认版本为 `1.13.15`。
+订阅请求使用带内核版本的 `User-Agent: sing-box/1.14.3`（覆盖 `SINGBOX_VERSION` 时同步变化），Xboard 必须返回该版本可直接运行的完整 JSON。每次执行都会获取并校验配置，校验成功后备份旧配置、替换并重启。已安装且版本匹配的二进制会复用。默认版本为 `1.14.3`。
 
 安装前无需运行 sing-box：选择 SSH 代理时，安装器用系统 OpenSSH 建立独立 SOCKS 隧道，供依赖安装、GitHub 二进制和订阅配置下载使用。下载与校验完成后关闭隧道，再安装文件并启动客户端。SSH 模式需要预先具备 OpenSSH 客户端；无法通过尚未建立的 SSH 隧道安装 SSH 自身。Debian/Ubuntu 的 APT 支持这里使用的 `socks5h` 代理环境。
 
 无终端自动化请加 `--env`。命令行订阅 URL 优先于 `SUBSCRIPTION_URL`，例如 `bash VPS/singbox/client/install.sh --env .env 'https://subscription.example.com/config'`。
 
-客户端保留 SSH 及 Tailscale IPv4/IPv6 bypass。`SSH_PORT` 可指定非 22 端口；自定义值应在 systemd override 中对 `sing-box-client-bypass.service` 设置 `Environment=SSH_PORT=...`，这样重启后仍有效。
+客户端提供 SSH、HTTP/HTTPS 入站回程及 Tailscale 的 IPv4/IPv6 bypass。默认保护公网接口收到的 TCP 22（SSH）、80、443 入站连接；宿主机回复和 Docker bridge/DNAT 转发回复都恢复连接标记，优先查询 `main` 路由表。本机主动访问 HTTP/HTTPS 仍遵循 sing-box 路由，主动 SSH 连接保留原有直连行为。公网接口目前仍需具有 IPv4 地址。
+
+`SSH_PORT` 可指定非 22 端口；`INGRESS_TCP_PORTS` 是额外保护的 TCP 入站端口，默认为 `80,443`，使用逗号分隔；设为空字符串可只保护 SSH。端口按宿主机实际入口、DNAT 前的端口填写，例如 `443:8443` 映射填 `443`。使用 systemd override 持久化配置：
+
+```ini
+# systemctl edit sing-box-client-bypass.service
+[Service]
+Environment=SSH_PORT=2222
+Environment=INGRESS_TCP_PORTS=80,443,8443
+```
+
+保存后运行 `systemctl daemon-reload` 和 `systemctl reload sing-box-client-bypass.service`。规则重载以单次 nft 事务替换自有表，失败时保留旧 nft 规则；策略路由重复加载不会叠加。脚本使用保留位 `0x100`，写入时保留其他 mark 位；部署前应确认该位及策略路由优先级 `5000` 与其他网络组件不冲突，并早于 sing-box 的接管规则。Kubernetes/CNI、跨节点转发与多公网出口需结合实际路由适配，此处不提供通用保证。
+
+`VPS/singbox/client/template.json` 保存适配 1.14.3 的 NEKO 订阅模板，包含本项目的 NetBird/K8s 内网 DNS 和直连规则。订阅端必须填充真实节点及 selector/urltest 的节点列表后才能运行；安装器仍下载订阅端生成的完整配置，不会自动合并此模板，也不会修改现有集群网络。
+
+升级模板修正了节点 DNS 的引导解析：`dns-node` 使用独立的直连 DoH，省略空 `direct` 出站的 `detour`，并将 `route.default_domain_resolver` 指向 `dns-node`，避免代理节点域名仍由 `ali-dns` 解析。模板同时移除未使用的旧 `block` 出站和 `independent_cache`，将远程规则集下载迁移到 1.14 的显式 `http_clients` / `route.default_http_client`。先更新订阅端模板，再重新运行安装器获取配置；下载或配置校验失败时不会替换当前运行配置。
+
+该模板含 1.14 新字段，使用它的客户端也需要升级内核。版本依据：[1.14.3 稳定版](https://github.com/SagerNet/sing-box/releases/tag/v1.14.3)、[官方迁移说明](https://sing-box.sagernet.org/migration/)。
 
 ## sing-box server
 
@@ -177,6 +194,8 @@ bash VPS/singbox/server/test/run-compose.sh
 ```
 
 单元/流程测试使用临时目录和模拟安装器，不调用真实账户或修改主机服务。Compose 集成测试需要支持 systemd、cgroup 与特权容器的 Linux Docker 环境；client 测试验证 TUN/bypass，server 测试验证本地与远程配置和失败保护。
+
+`tests/test_singbox_bypass.py` 包含重载失败保护、旧规则迁移和清理测试；以 Linux root 运行且内核支持 network namespace、veth、nftables 时，还会在三个临时网络命名空间中验证真实 IPv4/IPv6 HTTP 入站、DNAT 端口映射回程、mark 位保留，以及主动 HTTP/HTTPS 仍遵循代理路由。网络测试缺少条件时明确跳过；它不修改宿主机的网络规则。
 
 SSH 集成测试使用回环地址上的临时转发服务，验证真实 OpenSSH 的密码认证、SOCKS 下载、远端 DNS 与清理行为；需要 OpenSSH 和 Python `paramiko`（Debian/Ubuntu 包名 `python3-paramiko`），缺少时会明确跳过这组测试。
 

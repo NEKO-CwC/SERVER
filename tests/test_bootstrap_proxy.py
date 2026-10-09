@@ -37,7 +37,7 @@ for i, value in enumerate(args):
 with (root / 'events').open('a') as out: out.write('curl\\n')
 os.execv(os.environ['TEST_REAL_CURL'], [os.environ['TEST_REAL_CURL'], *args])
 ''')
-        for version in ("1.13.15", "1.13.13"):
+        for version in ("1.14.3", "1.13.13"):
             archive = io.BytesIO()
             binary = ("#!/usr/bin/env python3\nimport json,sys\n"
                       f"if sys.argv[1] == 'version': print('sing-box version {version}')\n"
@@ -97,8 +97,8 @@ start_service() {
     def test_client_downloads_before_service_without_existing_singbox(self):
         self.assertFalse((self.root / "installed/sing-box").exists())
         self.bash(self.installer_setup("client") + 'main --env')
-        self.assertEqual(self.http.requests, ["/1.13.15.tar.gz", "/config.json"])
-        self.assertEqual(self.http.user_agents["/config.json"], "sing-box")
+        self.assertEqual(self.http.requests, ["/1.14.3.tar.gz", "/config.json"])
+        self.assertEqual(self.http.user_agents["/config.json"], "sing-box/1.14.3")
         self.assertEqual((self.root / "events").read_text().splitlines(), ["dependencies", "curl", "curl", "start"])
         self.assertEqual(json.loads((self.root / "config/config.json").read_text()), {"fixture": "downloaded"})
         self.assertEqual(self.ssh.auth_attempts, 1)
