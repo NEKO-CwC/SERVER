@@ -312,6 +312,91 @@ stage_singbox amd64
 install_binary
 ''')
 
+    def test_client_reuses_installed_binary_when_cronet_library_is_present(self):
+        self.script("installed/sing-box", "#!/usr/bin/env python3\nimport sys\nprint('sing-box version 1.13.13')\n")
+        (self.root / "installed/libcronet.so").write_text("installed-libcronet")
+        self.bash('''source VPS/singbox/client/install.sh
+SINGBOX_VERSION=1.13.13
+TMP_DIR="$TEST_ROOT/stage"
+INSTALL_BIN="$TEST_ROOT/installed/sing-box"
+download_file() { echo unexpected-network >&2; return 99; }
+stage_singbox amd64
+[[ "$STAGED_BIN" == "$INSTALL_BIN" ]]
+[[ -z "$SINGBOX_LIB_SOURCE" ]]
+install_binary
+[[ "$(cat "$TEST_ROOT/installed/libcronet.so")" == installed-libcronet ]]
+''')
+
+    def test_client_downloads_archive_again_to_add_missing_cronet_library(self):
+        self.script("installed/sing-box", "#!/usr/bin/env python3\nimport sys\nprint('sing-box version 1.13.13')\n")
+        self.script("stage/sing-box-1.13.13-linux-amd64/sing-box",
+                    "#!/usr/bin/env python3\nimport sys\nprint('sing-box version 1.13.13')\n")
+        (self.root / "stage/sing-box-1.13.13-linux-amd64/libcronet.so").write_text("downloaded-libcronet")
+        result = self.bash('''source VPS/singbox/client/install.sh
+SINGBOX_VERSION=1.13.13
+TMP_DIR="$TEST_ROOT/stage"
+INSTALL_BIN="$TEST_ROOT/installed/sing-box"
+download_file() {
+  printf 'GET %s\\n' "$2" >>"$TEST_ROOT/requests"
+  tar -czf "$1" -C "$TEST_ROOT/stage" sing-box-1.13.13-linux-amd64
+}
+stage_singbox amd64
+[[ "$STAGED_BIN" == "$TEST_ROOT/stage/sing-box-1.13.13-linux-amd64/sing-box" ]]
+[[ "$SINGBOX_LIB_SOURCE" == "$TEST_ROOT/stage/sing-box-1.13.13-linux-amd64/libcronet.so" ]]
+install_binary
+[[ "$(cat "$TEST_ROOT/installed/libcronet.so")" == downloaded-libcronet ]]
+[[ "$(stat -c '%a' "$TEST_ROOT/installed/libcronet.so")" == 644 ]]
+''')
+        self.assertIn("missing libcronet.so", result.stdout)
+        self.assertEqual((self.root / "requests").read_text().strip().count("GET"), 1)
+
+    def test_server_reuses_installed_binary_without_the_cronet_library(self):
+        self.bash(self.server_setup + '''INSTALL_BIN="$TEST_ROOT/binary"
+SINGBOX_LIB_SOURCE=""
+download_file() { echo unexpected-network >&2; return 99; }
+stage_singbox amd64
+[[ "$STAGED_BIN" == "$INSTALL_BIN" ]]
+''')
+
+    def test_install_binary_leaves_no_library_when_the_archive_had_none(self):
+        (self.root / "old-binary").write_text("old-version")
+        self.bash('''source VPS/singbox/client/install.sh
+INSTALL_BIN="$TEST_ROOT/installed/sing-box"
+STAGED_BIN="$TEST_ROOT/old-binary"
+SINGBOX_LIB_SOURCE=""
+install_binary
+[[ "$(cat "$INSTALL_BIN")" == old-version ]]
+[[ ! -e "$TEST_ROOT/installed/libcronet.so" ]]
+''')
+
+    def test_install_binary_removes_stale_library_when_the_archive_ships_none(self):
+        # Upgrading onto a release whose archive has no library must not leave the old one.
+        installed = self.root / "installed"
+        installed.mkdir()
+        (installed / "libcronet.so").write_text("stale-libcronet")
+        (self.root / "new-binary").write_text("new-version")
+        self.bash('''source VPS/singbox/client/install.sh
+INSTALL_BIN="$TEST_ROOT/installed/sing-box"
+STAGED_BIN="$TEST_ROOT/new-binary"
+SINGBOX_LIB_SOURCE=""
+SINGBOX_FROM_ARCHIVE=1
+install_binary
+[[ "$(cat "$INSTALL_BIN")" == new-version ]]
+[[ ! -e "$TEST_ROOT/installed/libcronet.so" ]]
+''')
+
+    def test_reused_install_does_not_touch_the_installed_library(self):
+        installed = self.root / "installed"
+        installed.mkdir()
+        (installed / "libcronet.so").write_text("installed-libcronet")
+        self.bash('''source VPS/singbox/client/install.sh
+INSTALL_BIN="$TEST_ROOT/installed/sing-box"
+STAGED_BIN="$INSTALL_BIN"
+SINGBOX_FROM_ARCHIVE=0
+install_binary
+[[ "$(cat "$TEST_ROOT/installed/libcronet.so")" == installed-libcronet ]]
+''')
+
     def test_legacy_active_service_is_rejected(self):
         self.bash(self.server_setup + '''systemctl() { [[ "$1" == is-active && "$3" == sing-box.service ]]; }
 require_legacy_stopped

@@ -37,7 +37,7 @@ for i, value in enumerate(args):
 with (root / 'events').open('a') as out: out.write('curl\\n')
 os.execv(os.environ['TEST_REAL_CURL'], [os.environ['TEST_REAL_CURL'], *args])
 ''')
-        for version in ("1.14.3", "1.13.13"):
+        for version in ("1.14.4", "1.13.13"):
             archive = io.BytesIO()
             binary = ("#!/usr/bin/env python3\nimport json,sys\n"
                       f"if sys.argv[1] == 'version': print('sing-box version {version}')\n"
@@ -49,6 +49,12 @@ os.execv(os.environ['TEST_REAL_CURL'], [os.environ['TEST_REAL_CURL'], *args])
                 entry.mode = 0o755
                 entry.size = len(binary)
                 tar.addfile(entry, io.BytesIO(binary))
+                # Upstream releases carry the shared library the naive outbound loads.
+                library = f"fixture-libcronet-{version}\n".encode()
+                entry = tarfile.TarInfo(f"sing-box-{version}-linux-amd64/libcronet.so")
+                entry.mode = 0o755
+                entry.size = len(library)
+                tar.addfile(entry, io.BytesIO(library))
             self.http.payloads[f"/{version}.tar.gz"] = archive.getvalue()
         self.http.payloads["/config.json"] = b'{"fixture":"downloaded"}'
         self.env["SUBSCRIPTION_URL"] = f"http://download.example.invalid:{self.http.server_port}/config.json"
@@ -97,10 +103,13 @@ start_service() {
     def test_client_downloads_before_service_without_existing_singbox(self):
         self.assertFalse((self.root / "installed/sing-box").exists())
         self.bash(self.installer_setup("client") + 'main --env')
-        self.assertEqual(self.http.requests, ["/1.14.3.tar.gz", "/config.json"])
-        self.assertEqual(self.http.user_agents["/config.json"], "sing-box/1.14.3")
+        self.assertEqual(self.http.requests, ["/1.14.4.tar.gz", "/config.json"])
+        self.assertEqual(self.http.user_agents["/config.json"], "sing-box/1.14.4")
         self.assertEqual((self.root / "events").read_text().splitlines(), ["dependencies", "curl", "curl", "start"])
         self.assertEqual(json.loads((self.root / "config/config.json").read_text()), {"fixture": "downloaded"})
+        # The naive outbound loads this library from the binary's directory.
+        self.assertEqual((self.root / "installed/libcronet.so").read_text(), "fixture-libcronet-1.14.4\n")
+        self.assertEqual((self.root / "installed/libcronet.so").stat().st_mode & 0o777, 0o644)
         self.assertEqual(self.ssh.auth_attempts, 1)
         self.assert_tunnel_cleaned()
 

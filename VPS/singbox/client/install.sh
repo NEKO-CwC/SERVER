@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_CLIENT_VERSION="1.14.3"
+DEFAULT_CLIENT_VERSION="1.14.4"
 SINGBOX_VERSION="${SINGBOX_VERSION:-${DEFAULT_CLIENT_VERSION}}"
+# Subscriptions may contain naive outbounds, which need libcronet.so beside the binary.
+SINGBOX_REQUIRE_CRONET_LIB=1
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
 STARTUP_STABILITY_SECONDS=5
 
@@ -20,6 +22,8 @@ TMP_DIR=""
 STAGED_BIN=""
 STAGED_CONFIG=""
 CLI_SUBSCRIPTION_URL=""
+SINGBOX_LIB_SOURCE=""
+SINGBOX_FROM_ARCHIVE=0
 
 source "${SCRIPT_DIR}/../common.sh"
 

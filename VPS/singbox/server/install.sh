@@ -14,6 +14,8 @@ CLI_CONFIG_SOURCE=""
 CLI_CONFIG_URL=""
 TMP_DIR=""
 STAGED_BIN=""
+SINGBOX_LIB_SOURCE=""
+SINGBOX_FROM_ARCHIVE=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 info() { printf '[INFO] %s\n' "$*"; }

@@ -87,7 +87,9 @@ bash VPS/singbox/client/install.sh # 交互选择代理并输入订阅 URL
 bash VPS/singbox/client/install.sh --env .env # 读取代理和 SUBSCRIPTION_URL
 ```
 
-订阅请求使用带内核版本的 `User-Agent: sing-box/1.14.3`（覆盖 `SINGBOX_VERSION` 时同步变化），Xboard 必须返回该版本可直接运行的完整 JSON。每次执行都会获取并校验配置，校验成功后备份旧配置、替换并重启。已安装且版本匹配的二进制会复用。默认版本为 `1.14.3`。
+订阅请求使用带内核版本的 `User-Agent: sing-box/1.14.4`（覆盖 `SINGBOX_VERSION` 时同步变化），Xboard 必须返回该版本可直接运行的完整 JSON。每次执行都会获取并校验配置，校验成功后备份旧配置、替换并重启。已安装且版本匹配的二进制会复用；若已装内核缺少 `libcronet.so`（旧安装器只复制了可执行文件），安装器会重新下载压缩包补上该库。默认版本为 `1.14.4`。
+
+`naive` 出站通过动态加载 `libcronet.so` 工作，sing-box 只在该可执行文件所在目录查找它。上游 1.13.0 起把该库放进发布压缩包，因此安装器现在把 `sing-box` 和 `libcronet.so` 一起装到 `/usr/local/lib/sing-box-client/`。缺少此库时，含 `naive` 节点的订阅会在校验阶段报 `initialize outbound[N]: cronet: library not found`。
 
 安装前无需运行 sing-box：选择 SSH 代理时，安装器用系统 OpenSSH 建立独立 SOCKS 隧道，供依赖安装、GitHub 二进制和订阅配置下载使用。下载与校验完成后关闭隧道，再安装文件并启动客户端。SSH 模式需要预先具备 OpenSSH 客户端；无法通过尚未建立的 SSH 隧道安装 SSH 自身。Debian/Ubuntu 的 APT 支持这里使用的 `socks5h` 代理环境。
 
@@ -106,13 +108,13 @@ Environment=INGRESS_TCP_PORTS=80,443,8443
 
 保存后运行 `systemctl daemon-reload` 和 `systemctl reload sing-box-client-bypass.service`。规则重载以单次 nft 事务替换自有表，失败时保留旧 nft 规则；策略路由重复加载不会叠加。脚本使用保留位 `0x100`，写入时保留其他 mark 位；部署前应确认该位及策略路由优先级 `5000` 与其他网络组件不冲突，并早于 sing-box 的接管规则。Kubernetes/CNI、跨节点转发与多公网出口需结合实际路由适配，此处不提供通用保证。
 
-`VPS/singbox/client/template.json` 保存适配 1.14.3 的 NEKO 订阅模板，包含本项目的 NetBird/K8s 内网 DNS 和直连规则。订阅端必须填充真实节点及 selector/urltest 的节点列表后才能运行；安装器仍下载订阅端生成的完整配置，不会自动合并此模板，也不会修改现有集群网络。
+`VPS/singbox/client/template.json` 保存适配 1.14 的 NEKO 订阅模板，包含本项目的 NetBird/K8s 内网 DNS 和直连规则。订阅端必须填充真实节点及 selector/urltest 的节点列表后才能运行；安装器仍下载订阅端生成的完整配置，不会自动合并此模板，也不会修改现有集群网络。
 
 升级模板修正了节点 DNS 的引导解析：`dns-node` 使用独立的直连 DoH，省略空 `direct` 出站的 `detour`，并将 `route.default_domain_resolver` 指向 `dns-node`，避免代理节点域名仍由 `ali-dns` 解析。模板同时移除未使用的旧 `block` 出站和 `independent_cache`，将远程规则集下载迁移到 1.14 的显式 `http_clients` / `route.default_http_client`。先更新订阅端模板，再重新运行安装器获取配置；下载或配置校验失败时不会替换当前运行配置。
 
-该模板含 1.14 新字段，使用它的客户端也需要升级内核。版本依据：[1.14.3 稳定版](https://github.com/SagerNet/sing-box/releases/tag/v1.14.3)、[官方迁移说明](https://sing-box.sagernet.org/migration/)。
+该模板含 1.14 新字段，使用它的客户端也需要升级内核。版本依据：[1.14.4 稳定版](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4)、[官方迁移说明](https://sing-box.sagernet.org/migration/)；升级细节见 [验证记录](docs/validation/singbox-1.14.4-20261028.md)。
 
-若出现 `route.default_http_client: json: unknown field "default_http_client"`，校验配置的内核通常仍低于 1.14。先确认服务器已取得包含 1.14.3 升级的安装器，再检查环境或 `--env` 文件是否固定了旧 `SINGBOX_VERSION`。安装日志会显示目标版本，以及实际执行配置校验的二进制版本和路径；此类校验失败不会替换现有二进制或配置。仅更新订阅模板、没有更新安装器时，旧客户端仍会收到无法识别的新字段。
+若出现 `route.default_http_client: json: unknown field "default_http_client"`，校验配置的内核通常仍低于 1.14。先确认服务器已取得包含 1.14.4 升级的安装器，再检查环境或 `--env` 文件是否固定了旧 `SINGBOX_VERSION`。安装日志会显示目标版本，以及实际执行配置校验的二进制版本和路径；此类校验失败不会替换现有二进制或配置。仅更新订阅模板、没有更新安装器时，旧客户端仍会收到无法识别的新字段。
 
 ## sing-box server
 

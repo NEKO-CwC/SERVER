@@ -24,11 +24,12 @@ bash "${WORKSPACE}/install.sh" --env "${SUBSCRIPTION_URL}"
 
 echo "[verify] checking installed files and services"
 assert_file /usr/local/lib/sing-box-client/sing-box
+assert_file /usr/local/lib/sing-box-client/libcronet.so
 assert_file "${CONFIG_DIR}/config.json"
 assert_file "${CONFIG_DIR}/bypass.sh"
 assert_file /etc/systemd/system/sing-box-client-bypass.service
 assert_file /etc/systemd/system/sing-box-client.service
-/usr/local/lib/sing-box-client/sing-box version | grep -F "sing-box version 1.14.3"
+/usr/local/lib/sing-box-client/sing-box version | grep -F "sing-box version 1.14.4"
 [[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == 600 ]]
 [[ "$(stat -c '%a' "${CONFIG_DIR}/bypass.sh")" == 755 ]]
 cmp -s "${WORKSPACE}/bypass.sh" "${CONFIG_DIR}/bypass.sh"
@@ -43,7 +44,7 @@ grep -F 'ExecStopPost=/etc/sing-box-client/bypass.sh cleanup' /etc/systemd/syste
 [[ "$(readlink -f "/proc/$(systemctl show -p MainPID --value sing-box-client.service)/cwd")" == /var/lib/sing-box-client ]]
 assert_file /var/lib/sing-box-client/cache.db
 assert_file /subscription-state/user-agent.ok
-[[ "$(cat /subscription-state/user-agent.ok)" == sing-box/1.14.3 ]]
+[[ "$(cat /subscription-state/user-agent.ok)" == sing-box/1.14.4 ]]
 
 echo "[verify] simulating Tailscale routes and checking marked SSH paths"
 ip link add tailscale0 type dummy 2>/dev/null || true
