@@ -49,7 +49,7 @@ class ProxyEnvironmentTests(AgentFixture):
 
     def test_completed_install_never_starts_ssh(self):
         self.env.update(AGENT_PROXY_MODE="ssh", AGENT_SSH_HOST="", AGENT_SSH_USER="", AGENT_SSH_PASSWORD="")
-        for tool in ("cc-switch", "claude", "codex"):
+        for tool in ("magpie", "claude", "codex"):
             shutil.copy(self.root / "payload" / tool, self.root / "bin" / tool)
         self.bash('''export PATH="$TEST_ROOT/bin:$PATH"
 source agent/install.sh
@@ -237,7 +237,7 @@ ensure_download_proxy
 parse_args --skip-config
 set_default_paths() {
   STATE_DIR="$TEST_ROOT/state"
-  CC_CONFIG_DIR="$TEST_ROOT/config"
+  MAGPIE_CONFIG_DIR="$TEST_ROOT/config/magpie"
   BASHRC_FILE="$TEST_ROOT/bashrc"
 }
 umask 077
@@ -309,7 +309,7 @@ run_installer "http://download.example.invalid:$1/install.sh" sh
 parse_args --skip-config
 set_default_paths() {
   STATE_DIR="$TEST_ROOT/state"
-  CC_CONFIG_DIR="$TEST_ROOT/config"
+  MAGPIE_CONFIG_DIR="$TEST_ROOT/config/magpie"
   BASHRC_FILE="$TEST_ROOT/bashrc"
 }
 umask 077

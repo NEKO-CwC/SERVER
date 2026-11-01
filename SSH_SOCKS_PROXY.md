@@ -2,9 +2,9 @@
 
 Agent、sing-box client/server 共用 `lib/proxy.sh` 中的普通代理与临时 SSH SOCKS 隧道。默认交互选择；使用 `--env` 才读取已导出的环境变量，`--env FILE` 可直接加载指定的私有配置文件。SSH 隧道由系统 OpenSSH 提供，在 sing-box 尚未安装或运行时也可用于下载。
 
-交互模式可以选择不使用代理、输入 HTTP/HTTPS/SOCKS 地址，或输入 SSH 主机、用户名、隐藏密码、端口及主机密钥策略。默认不校验、不登记，无需准备 known_hosts；选择自动登记或严格校验后才询问可选的 known_hosts 文件。现有代理环境变量不会作为默认答案使用。代理配置之后会询问 cc-switch 配置来源，默认 WebDAV，也可以选择本地 SQL 文件。
+交互模式可以选择不使用代理、输入 HTTP/HTTPS/SOCKS 地址，或输入 SSH 主机、用户名、隐藏密码、端口及主机密钥策略。默认不校验、不登记，无需准备 known_hosts；选择自动登记或严格校验后才询问可选的 known_hosts 文件。现有代理环境变量不会作为默认答案使用。代理配置之后会询问 Magpie 配置来源，默认 WebDAV，也可以选择本地加密备份；同步或恢复时需要独立加密口令。
 
-上面的 cc-switch 选择仅属于 Agent；client 还需订阅 URL，server 使用其本地或远程配置文件。新配置统一采用 `INSTALL_*` 变量，兼容旧 `AGENT_PROXY_*` / `AGENT_SSH_*` 名称；非空 `INSTALL_*` 值优先。
+上面的 Magpie 选择仅属于 Agent；client 还需订阅 URL，server 使用其本地或远程配置文件。新配置统一采用 `INSTALL_*` 变量，兼容旧 `AGENT_PROXY_*` / `AGENT_SSH_*` 名称；非空 `INSTALL_*` 值优先。
 
 ## 普通环境代理
 

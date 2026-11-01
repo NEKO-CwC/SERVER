@@ -70,7 +70,7 @@ class ShellTests(unittest.TestCase):
                         self.fail("Exited before prompt: " + output.decode(errors="replace"))
                 cursor = output.index(token, cursor) + len(token)
                 # Send passwords only after read -s has disabled terminal echo.
-                if "密码" in prompt:
+                if "密码" in prompt or "口令" in prompt:
                     while termios.tcgetattr(master)[3] & termios.ECHO:
                         receive()
                 os.write(master, b"\x04" if answer is None else (answer + "\n").encode())
@@ -97,56 +97,58 @@ class AgentFixture(ShellTests):
             AGENT_PROXY_MODE="env",
             AGENT_PROXY_URL="",
             AGENT_SSH_PASSWORD="",
-            CC_SWITCH_CONFIG_SOURCE="dav",
-            CC_SWITCH_SQL_FILE="",
+            MAGPIE_CONFIG_SOURCE="dav",
+            MAGPIE_BACKUP_FILE="",
             AGENT_INSTALL_STATE_DIR=str(self.root / "state"),
             AGENT_BASHRC=str(self.root / "bashrc"),
-            CC_SWITCH_CONFIG_DIR=str(self.root / "config"),
-            CC_SWITCH_WEBDAV_BASE_URL="https://dav.example.invalid/dav",
-            CC_SWITCH_WEBDAV_USERNAME="fixture-user",
-            CC_SWITCH_WEBDAV_PASSWORD="fixture-secret-only",
+            XDG_CONFIG_HOME=str(self.root / "config"),
+            MAGPIE_WEBDAV_BASE_URL="https://dav.example.invalid/dav/magpie-sync",
+            MAGPIE_WEBDAV_USERNAME="fixture-user",
+            MAGPIE_WEBDAV_PASSWORD="fixture-secret-only",
+            MAGPIE_PASSPHRASE="fixture-encryption-only",
         )
         self.script("bin/curl", '''#!/usr/bin/env python3
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ['TEST_ROOT'])
 args = sys.argv[1:]
 url = next(arg for arg in args if arg.startswith('https://'))
-tool = 'cc-switch' if 'cc-switch-cli' in url else ('claude' if 'claude.ai' in url else 'codex')
+tool = 'magpie' if 'usemagpie.ai' in url else ('claude' if 'claude.ai' in url else 'codex')
 with (root / 'calls').open('a') as out: out.write('download:' + tool + '\\n')
 (root / 'download-env.json').write_text(json.dumps({key: os.environ.get(key) for key in ('http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}))
+(root / 'download-secret-env.json').write_text(json.dumps({key: value for key, value in os.environ.items() if key in ('MAGPIE_WEBDAV_PASSWORD', 'MAGPIE_PASSPHRASE', 'WEBDAV_PASSWORD', 'BACKUP_PASSPHRASE')}))
 dest = pathlib.Path(args[args.index('-o') + 1])
 dest.write_text('cp "$TEST_ROOT/payload/' + tool + '" "$TEST_ROOT/bin/' + tool + '"\\nchmod +x "$TEST_ROOT/bin/' + tool + '"\\n')
 if os.environ.get('TEST_FAIL_DOWNLOAD') == tool: sys.exit(22)
 ''')
-        self.script("payload/cc-switch", '''#!/usr/bin/env python3
+        self.script("payload/magpie", '''#!/usr/bin/env python3
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ['TEST_ROOT'])
 args = sys.argv[1:]
 if args == ['--version']:
-    print('cc-switch fixture')
+    print('magpie fixture')
     sys.exit(0)
-event = ':'.join(args[:3]) if args[:2] == ['config', 'webdav'] else ':'.join(args[:2])
+event = 'restore' if args[0] == 'restore' else ':'.join(args[:2])
 with (root / 'calls').open('a') as out: out.write(event + '\\n')
-if event == 'config:webdav:set': (root / 'dav-args.json').write_text(json.dumps(args))
-if event == 'config:import': (root / 'sql-path').write_text(args[2])
-if event == 'config:import':
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print('Error: Prompt failed: Operation was interrupted by the user')
-        sys.exit(1)
-    if input('Continue with import? (y/N) ').strip().lower() != 'y':
-        print('Cancelled.')
-        sys.exit(0)
-    if os.environ.get('TEST_IMPORT_CANCEL') == '1':
-        print('Cancelled.')
-        sys.exit(0)
+secrets = []
+if event == 'webdav:on':
+    (root / 'dav-args.json').write_text(json.dumps(args))
+    secrets = [sys.stdin.readline().rstrip('\\n'), sys.stdin.readline().rstrip('\\n')]
+    assert all(secrets), 'Both secrets must arrive on stdin'
+    (root / 'dav-stdin.json').write_text(json.dumps(secrets))
+if event == 'restore':
+    (root / 'backup-path').write_text(args[1])
+    secrets = [sys.stdin.readline().rstrip('\\n')]
+    assert secrets[0], 'Restore passphrase must arrive on stdin'
+    (root / 'backup-stdin.json').write_text(json.dumps(secrets))
 if os.environ.get('TEST_FAIL_CONFIG') == event:
-    print(os.environ['CC_SWITCH_WEBDAV_PASSWORD'])
+    print(' '.join(secrets))
     sys.exit(1)
-if event in ('config:import', 'config:webdav:download'):
-    directory = pathlib.Path(os.environ['CC_SWITCH_CONFIG_DIR'])
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / 'cc-switch.db').write_text('fixture database')
-    if event == 'config:import': print('Configuration imported from ' + args[2])
+if event in ('restore', 'webdav:on'):
+    assert (root / 'bin/claude').exists() and (root / 'bin/codex').exists(), 'Install agents before restoring their settings'
+    if os.environ.get('TEST_MISSING_CONFIG') != '1':
+        directory = pathlib.Path(os.environ['XDG_CONFIG_HOME']) / 'magpie'
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'providers.json').write_text('{"providers":[]}')
 ''')
         for tool in ("claude", "codex"):
             self.script(f"payload/{tool}", f"#!/bin/sh\necho '{tool} fixture'\n")
@@ -168,64 +170,67 @@ class AgentTests(AgentFixture):
         self.env["TEST_FAIL_DOWNLOAD"] = "codex"
         self.run_agent(ok=False)
         self.assertFalse((self.root / "bin/codex").exists())
-        self.assertTrue((self.root / "state/config-success").is_file())
+        self.assertFalse((self.root / "state/config-success").exists())
         del self.env["TEST_FAIL_DOWNLOAD"]
         self.run_agent()
         calls = self.calls()
-        self.assertEqual(calls.count("download:cc-switch"), 1)
+        self.assertEqual(calls.count("download:magpie"), 1)
         self.assertEqual(calls.count("download:claude"), 1)
         self.assertEqual(calls.count("download:codex"), 2)
-        self.assertEqual(calls.count("config:webdav:download"), 1)
+        self.assertEqual(calls.count("webdav:on"), 1)
         self.run_agent()
         self.assertEqual(calls, self.calls())
         self.assertEqual((self.root / "bashrc").read_text().count("alias cc="), 1)
 
     def test_failed_sync_is_retried_and_credentials_stay_in_private_log(self):
-        self.env["TEST_FAIL_CONFIG"] = "config:webdav:download"
+        self.env["TEST_FAIL_CONFIG"] = "webdav:on"
         failed = self.run_agent(ok=False)
-        self.assertNotIn(self.env["CC_SWITCH_WEBDAV_PASSWORD"], failed.stdout + failed.stderr)
+        for key in ("MAGPIE_WEBDAV_PASSWORD", "MAGPIE_PASSPHRASE"):
+            self.assertNotIn(self.env[key], failed.stdout + failed.stderr)
         self.assertFalse((self.root / "state/config-success").exists())
         self.assertEqual((self.root / "state/config-last.log").stat().st_mode & 0o777, 0o600)
+        self.assertIn("webdav:auto", self.calls())
         del self.env["TEST_FAIL_CONFIG"]
         self.run_agent()
-        self.assertEqual(self.calls().count("config:webdav:download"), 2)
+        self.assertEqual(self.calls().count("webdav:on"), 2)
         self.assertFalse((self.root / "state/config-last.log").exists())
 
-    def test_refresh_force_source_change_and_missing_database(self):
+    def test_refresh_force_source_change_and_missing_config(self):
         self.run_agent()
         self.run_agent("--force")
-        self.assertEqual(self.calls().count("download:cc-switch"), 2)
-        self.assertEqual(self.calls().count("config:webdav:download"), 1)
+        self.assertEqual(self.calls().count("download:magpie"), 2)
+        self.assertEqual(self.calls().count("webdav:on"), 1)
         self.run_agent("--refresh-config")
-        self.env["CC_SWITCH_WEBDAV_BASE_URL"] = "https://dav2.example.invalid/dav"
+        self.env["MAGPIE_WEBDAV_BASE_URL"] = "https://dav2.example.invalid/dav"
         self.run_agent()
-        (self.root / "config/cc-switch.db").unlink()
+        (self.root / "config/magpie/providers.json").unlink()
         self.run_agent()
-        self.assertEqual(self.calls().count("config:webdav:download"), 4)
+        self.assertEqual(self.calls().count("webdav:on"), 4)
 
-    def test_sql_change_and_broken_binary(self):
-        sql = self.root / "config.sql"
-        sql.write_text("select 1;\n")
-        self.run_agent("--sql-file", sql)
-        self.run_agent("--sql-file", sql)
-        sql.write_text("select 2;\n")
+    def test_backup_change_and_broken_binary(self):
+        backup = self.root / "config.magpie-backup"
+        backup.write_text("sealed fixture one")
+        self.run_agent("--backup-file", backup)
+        self.run_agent("--backup-file", backup)
+        backup.write_text("sealed fixture two")
         self.script("bin/claude", "#!/bin/sh\nexit 1\n")
-        self.run_agent("--sql-file", sql)
-        self.assertEqual(self.calls().count("config:import"), 2)
+        self.run_agent("--backup-file", backup)
+        self.assertEqual(self.calls().count("restore"), 2)
         self.assertEqual(self.calls().count("download:claude"), 2)
-        self.assertNotIn("config:webdav:download", self.calls())
+        self.assertNotIn("webdav:on", self.calls())
 
-    def test_different_database_directory_requires_import(self):
+    def test_different_config_directory_requires_import(self):
         self.run_agent()
-        other_config = self.root / "other-config"
-        other_config.mkdir()
-        (other_config / "cc-switch.db").write_text("unrelated database")
-        self.env["CC_SWITCH_CONFIG_DIR"] = str(other_config)
+        other_config = self.root / "other-config/magpie"
+        other_config.mkdir(parents=True)
+        (other_config / "providers.json").write_text("unrelated config")
+        self.env["XDG_CONFIG_HOME"] = str(other_config.parent)
         self.run_agent()
-        self.assertEqual(self.calls().count("config:webdav:download"), 2)
+        self.assertEqual(self.calls().count("webdav:on"), 2)
 
     def test_missing_env_fails_before_download_and_skip_config_needs_no_secrets(self):
-        self.env["CC_SWITCH_WEBDAV_PASSWORD"] = ""
+        self.env["MAGPIE_WEBDAV_PASSWORD"] = ""
+        self.env["MAGPIE_PASSPHRASE"] = ""
         self.run_agent(ok=False)
         self.assertFalse((self.root / "calls").exists())
         self.run_agent("--skip-config")
@@ -234,12 +239,44 @@ class AgentTests(AgentFixture):
 
     def test_failed_refresh_invalidates_previous_marker(self):
         self.run_agent()
-        self.env["TEST_FAIL_CONFIG"] = "config:webdav:download"
+        self.env["TEST_FAIL_CONFIG"] = "webdav:on"
         self.run_agent("--refresh-config", ok=False)
         self.assertFalse((self.root / "state/config-success").exists())
         del self.env["TEST_FAIL_CONFIG"]
         self.run_agent()
-        self.assertEqual(self.calls().count("config:webdav:download"), 3)
+        self.assertEqual(self.calls().count("webdav:on"), 3)
+
+    def test_secrets_use_stdin_and_are_not_exported_to_installers(self):
+        self.run_agent()
+        args = json.loads((self.root / "dav-args.json").read_text())
+        secrets = json.loads((self.root / "dav-stdin.json").read_text())
+        for key in ("MAGPIE_WEBDAV_PASSWORD", "MAGPIE_PASSPHRASE"):
+            self.assertNotIn(self.env[key], args)
+            self.assertIn(self.env[key], secrets)
+        self.assertEqual(json.loads((self.root / "download-secret-env.json").read_text()), {})
+        self.assertEqual((self.root / "state/config-success").stat().st_mode & 0o777, 0o600)
+
+    def test_missing_config_or_library_failure_never_marks_success(self):
+        self.env["TEST_MISSING_CONFIG"] = "1"
+        self.run_agent(ok=False)
+        self.assertFalse((self.root / "state/config-success").exists())
+        del self.env["TEST_MISSING_CONFIG"]
+        self.env["TEST_FAIL_CONFIG"] = "library:sync"
+        self.run_agent(ok=False)
+        self.assertFalse((self.root / "state/config-success").exists())
+
+    def test_passphrase_change_resyncs_and_invalid_secrets_fail_before_download(self):
+        self.env["MAGPIE_PASSPHRASE"] = self.env["MAGPIE_WEBDAV_PASSWORD"]
+        self.run_agent(ok=False)
+        self.assertFalse((self.root / "calls").exists())
+        self.env["MAGPIE_PASSPHRASE"] = "fixture-first"
+        self.run_agent()
+        self.env["MAGPIE_PASSPHRASE"] = "fixture-second"
+        self.run_agent()
+        self.assertEqual(self.calls().count("webdav:on"), 2)
+        self.env["MAGPIE_PASSPHRASE"] = "line-one\nline-two"
+        self.run_agent(ok=False)
+        self.assertEqual(self.calls().count("webdav:on"), 2)
 
 
 class SingBoxTests(ShellTests):

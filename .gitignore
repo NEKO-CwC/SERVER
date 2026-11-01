@@ -16,3 +16,6 @@ __pycache__/
 *.p12
 *.bak*
 VPS/singbox/**/config.json
+
+# Native Magpie exports contain private configuration even when encrypted.
+*.magpie-backup

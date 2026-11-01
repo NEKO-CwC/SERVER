@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# cc launcher — injects IS_SANDBOX=true and starts claude --dangerously-skip-permissions
+# Claude reads the settings Magpie writes; no provider environment is injected.
 
 CC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -13,52 +13,6 @@ log_warn() {
 
 log_error() {
   printf '[cc] ERROR: %s\n' "$*" >&2
-}
-
-collect_cc_switch_env() {
-  if ! command -v cc-switch &>/dev/null; then
-    return 0
-  fi
-
-  local provider_id
-  provider_id="$(cc-switch provider current -a claude 2>/dev/null)" || return 0
-  provider_id="$(printf '%s' "$provider_id" | tr -d '[:space:]')"
-  if [[ -z "$provider_id" ]]; then
-    return 0
-  fi
-
-  if ! command -v python3 &>/dev/null; then
-    log_warn "python3 不存在，跳过 cc-switch provider env 注入"
-    return 0
-  fi
-
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-
-  if cc-switch provider export -a claude "$provider_id" -o "$tmp/settings.local.json" 2>/dev/null; then
-    if [[ -f "$tmp/settings.local.json" ]]; then
-      local env_json
-      env_json="$(python3 -c "
-import json, sys
-try:
-    with open('$tmp/settings.local.json') as f:
-        data = json.load(f)
-    env = data.get('env', {})
-    for k, v in env.items():
-        print(f'{k}={v}')
-except Exception:
-    pass
-" 2>/dev/null)" || true
-      if [[ -n "$env_json" ]]; then
-        while IFS='=' read -r key value; do
-          if [[ -n "$key" ]]; then
-            export "$key=$value"
-          fi
-        done <<< "$env_json"
-      fi
-    fi
-  fi
 }
 
 find_claude() {
@@ -87,8 +41,6 @@ find_claude() {
 
 main() {
   export IS_SANDBOX=true
-
-  collect_cc_switch_env
 
   local claude_bin
   if ! claude_bin="$(find_claude)"; then

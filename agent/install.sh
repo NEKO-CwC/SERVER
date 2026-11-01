@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Linux agent installer: cc-switch + WebDAV/SQL config + Claude Code + Codex.
+# Linux agent installer: Magpie + encrypted config + Claude Code + Codex.
 
 USE_ENV=0
 ENV_FILE=""
 CONFIG_SOURCE="dav"
-SQL_FILE=""
-CLI_SQL_FILE=""
+BACKUP_FILE=""
+CLI_BACKUP_FILE=""
 FORCE=0
 REFRESH_CONFIG=0
 SKIP_CONFIG=0
 WEBDAV_BASE_URL=""
-WEBDAV_REMOTE_ROOT="cc-switch-sync"
-WEBDAV_PROFILE="default"
 WEBDAV_USERNAME=""
 WEBDAV_PASSWORD=""
+BACKUP_PASSPHRASE=""
 STATE_DIR=""
-CC_CONFIG_DIR=""
+MAGPIE_CONFIG_DIR=""
 BASHRC_FILE=""
 CONFIG_FINGERPRINT=""
 AGENT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,15 +36,15 @@ log_error() {
 
 print_usage() {
   cat <<'EOF'
-Usage: install.sh [--env [FILE]] [--sql-file FILE | --skip-config]
+Usage: install.sh [--env [FILE]] [--backup-file FILE | --skip-config]
                   [--refresh-config] [--force]
 
-Without --env, interactively choose a proxy and cc-switch source (default: DAV).
+Without --env, interactively choose a proxy and Magpie source (default: DAV).
 Passwords are read without echo. A terminal is required for interactive mode.
 
 Options:
   --env [FILE]    Non-interactive: use environment variables, optionally loading FILE.
-  --sql-file FILE  Import cc-switch config from a local SQL file and skip WebDAV.
+  --backup-file FILE  Restore a local encrypted Magpie backup instead of WebDAV.
   --skip-config    Install tools without importing/syncing configuration.
   --refresh-config  Sync/import again even if the same source already succeeded.
   --force         Reinstall tools. Configuration still needs --refresh-config.
@@ -63,9 +62,14 @@ Proxy environment:
 
   Legacy AGENT_PROXY_* / AGENT_SSH_* names remain supported.
 
-cc-switch environment:
-  CC_SWITCH_CONFIG_SOURCE=dav  Download WebDAV configuration (default).
-  CC_SWITCH_CONFIG_SOURCE=sql  Import CC_SWITCH_SQL_FILE from a local file.
+Magpie environment:
+  MAGPIE_CONFIG_SOURCE=dav     Sync WebDAV configuration (default).
+  MAGPIE_WEBDAV_BASE_URL       Parent of Magpie's own "magpie" folder.
+  MAGPIE_WEBDAV_USERNAME       WebDAV login name.
+  MAGPIE_WEBDAV_PASSWORD       WebDAV login password.
+  MAGPIE_PASSPHRASE            Separate encryption passphrase (both sources).
+  MAGPIE_CONFIG_SOURCE=backup  Restore MAGPIE_BACKUP_FILE from a local file.
+  XDG_CONFIG_HOME              Standard config parent; Magpie uses its magpie/.
 EOF
 }
 
@@ -80,14 +84,17 @@ parse_args() {
       --force) FORCE=1; shift ;;
       --refresh-config) REFRESH_CONFIG=1; shift ;;
       --skip-config) SKIP_CONFIG=1; shift ;;
-      --sql-file)
+      --backup-file)
         if [[ $# -lt 2 || -z "$2" ]]; then
-          log_error "--sql-file 需要指定 SQL 文件"
+          log_error "--backup-file 需要指定 Magpie 加密备份文件"
           return 2
         fi
-        CLI_SQL_FILE="$2"
+        CLI_BACKUP_FILE="$2"
         shift 2
         ;;
+      --sql-file)
+        log_error "Magpie 不接受 CC Switch SQL；已有客户端请用 agent/migrate-ccs-to-magpie.sh 接入 Magpie DAV，或先导出 Magpie 备份再使用 --backup-file"
+        return 2 ;;
       -h|--help)
         print_usage
         exit 0
@@ -100,8 +107,8 @@ parse_args() {
     esac
   done
 
-  if ((SKIP_CONFIG)) && { [[ -n "$CLI_SQL_FILE" ]] || ((REFRESH_CONFIG)); }; then
-    log_error "--skip-config 不能与 --sql-file 或 --refresh-config 一起使用"
+  if ((SKIP_CONFIG)) && { [[ -n "$CLI_BACKUP_FILE" ]] || ((REFRESH_CONFIG)); }; then
+    log_error "--skip-config 不能与 --backup-file 或 --refresh-config 一起使用"
     return 2
   fi
 
@@ -109,22 +116,22 @@ parse_args() {
 
 set_default_paths() {
   STATE_DIR="${HOME:-/root}/.local/state/neko-agent-install"
-  CC_CONFIG_DIR="${HOME:-/root}/.cc-switch"
+  MAGPIE_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/magpie"
   BASHRC_FILE="${HOME:-/root}/.bashrc"
 }
 
 load_environment_config() {
   load_env_file
   proxy_load_environment
-  CONFIG_SOURCE="${CC_SWITCH_CONFIG_SOURCE:-dav}"
-  SQL_FILE="${CC_SWITCH_SQL_FILE:-}"
-  WEBDAV_BASE_URL="${CC_SWITCH_WEBDAV_BASE_URL:-}"
-  WEBDAV_REMOTE_ROOT="${CC_SWITCH_WEBDAV_REMOTE_ROOT:-cc-switch-sync}"
-  WEBDAV_PROFILE="${CC_SWITCH_WEBDAV_PROFILE:-default}"
-  WEBDAV_USERNAME="${CC_SWITCH_WEBDAV_USERNAME:-}"
-  WEBDAV_PASSWORD="${CC_SWITCH_WEBDAV_PASSWORD:-}"
+  CONFIG_SOURCE="${MAGPIE_CONFIG_SOURCE:-dav}"
+  BACKUP_FILE="${MAGPIE_BACKUP_FILE:-}"
+  WEBDAV_BASE_URL="${MAGPIE_WEBDAV_BASE_URL:-}"
+  WEBDAV_USERNAME="${MAGPIE_WEBDAV_USERNAME:-}"
+  WEBDAV_PASSWORD="${MAGPIE_WEBDAV_PASSWORD:-}"
+  BACKUP_PASSPHRASE="${MAGPIE_PASSPHRASE:-}"
   STATE_DIR="${AGENT_INSTALL_STATE_DIR:-$STATE_DIR}"
-  CC_CONFIG_DIR="${CC_SWITCH_CONFIG_DIR:-$CC_CONFIG_DIR}"
+  MAGPIE_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/magpie"
+  if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then export XDG_CONFIG_HOME; fi
   BASHRC_FILE="${AGENT_BASHRC:-$BASHRC_FILE}"
 }
 
@@ -135,25 +142,29 @@ prompt_configuration() {
     return 2
   fi
   prompt_proxy
-  if ((SKIP_CONFIG)) || [[ -n "$CLI_SQL_FILE" ]]; then return; fi
+  if ((SKIP_CONFIG)); then return; fi
+  if [[ -n "$CLI_BACKUP_FILE" ]]; then
+    prompt_value BACKUP_PASSPHRASE "Magpie 加密口令" "" 1 1
+    return
+  fi
   while true; do
-    prompt_value choice "cc-switch 配置来源：1) WebDAV  2) 本地 SQL 文件" 1
+    prompt_value choice "Magpie 配置来源：1) WebDAV  2) 本地加密备份" 1
     case "$choice" in
       1)
         CONFIG_SOURCE=dav
         prompt_value WEBDAV_BASE_URL "WebDAV Base URL"
         prompt_value WEBDAV_USERNAME "WebDAV 用户名"
         prompt_value WEBDAV_PASSWORD "WebDAV 密码" "" 1 1
-        prompt_value WEBDAV_REMOTE_ROOT "WebDAV Remote Root" cc-switch-sync
-        prompt_value WEBDAV_PROFILE "WebDAV Profile" default
+        prompt_value BACKUP_PASSPHRASE "Magpie 加密口令" "" 1 1
         break ;;
       2)
-        CONFIG_SOURCE=sql
+        CONFIG_SOURCE=backup
         while true; do
-          prompt_value SQL_FILE "本地 SQL 文件路径"
-          if [[ -f "$SQL_FILE" && -r "$SQL_FILE" ]]; then break; fi
-          log_error "SQL 文件不存在或不可读，请重新输入"
+          prompt_value BACKUP_FILE "本地 Magpie 备份文件路径"
+          if [[ -f "$BACKUP_FILE" && -r "$BACKUP_FILE" ]]; then break; fi
+          log_error "备份文件不存在或不可读，请重新输入"
         done
+        prompt_value BACKUP_PASSPHRASE "Magpie 加密口令" "" 1 1
         break ;;
       *) log_error "请选择 1 或 2" ;;
     esac
@@ -165,17 +176,19 @@ collect_configuration() {
   if ((USE_ENV)); then load_environment_config; else prompt_configuration; fi
   # Keep SSH credentials out of installer subprocesses in either input mode.
   proxy_hide_password
-  export CC_SWITCH_CONFIG_DIR="$CC_CONFIG_DIR"
-  if [[ -n "$CLI_SQL_FILE" ]]; then CONFIG_SOURCE=sql; SQL_FILE="$CLI_SQL_FILE"; fi
+  # Only Magpie receives secrets, on stdin; installers never inherit them.
+  unset MAGPIE_WEBDAV_PASSWORD MAGPIE_PASSPHRASE
+  export -n WEBDAV_PASSWORD BACKUP_PASSPHRASE
+  if [[ -n "$CLI_BACKUP_FILE" ]]; then CONFIG_SOURCE=backup; BACKUP_FILE="$CLI_BACKUP_FILE"; fi
   if ((SKIP_CONFIG == 0)); then
     case "$CONFIG_SOURCE" in
-      dav|webdav) CONFIG_SOURCE=dav; SQL_FILE="" ;;
-      sql)
-        if [[ ! -f "$SQL_FILE" || ! -r "$SQL_FILE" ]]; then
-          log_error "SQL 来源需要可读的 CC_SWITCH_SQL_FILE，或使用 --sql-file FILE"
+      dav|webdav) CONFIG_SOURCE=dav; BACKUP_FILE="" ;;
+      backup)
+        if [[ ! -f "$BACKUP_FILE" || ! -r "$BACKUP_FILE" ]]; then
+          log_error "备份来源需要可读的 MAGPIE_BACKUP_FILE，或使用 --backup-file FILE"
           return 2
         fi ;;
-      *) log_error "CC_SWITCH_CONFIG_SOURCE 仅支持 dav 或 sql"; return 2 ;;
+      *) log_error "MAGPIE_CONFIG_SOURCE 仅支持 dav 或 backup"; return 2 ;;
     esac
   fi
 }
@@ -213,57 +226,46 @@ prepare_process_env() {
   proxy_prepare_env
 }
 
-install_cc_switch() {
-  log_step "安装 cc-switch"
+install_magpie() {
+  log_step "安装 Magpie"
 
-  if tool_ready cc-switch; then return; fi
+  if tool_ready magpie; then return; fi
 
-  if ! CC_SWITCH_FORCE=1 run_installer https://github.com/SaladDay/cc-switch-cli/releases/latest/download/install.sh bash; then
-    log_error "cc-switch 安装失败"
+  if ! run_installer https://usemagpie.ai/install.sh sh; then
+    log_error "Magpie 安装失败"
     return 1
   fi
 
   export PATH="/root/.local/bin:${HOME:-/root}/.local/bin:$PATH"
-  if ! cc-switch --version >/dev/null 2>&1; then
-    log_error "cc-switch 安装后无法找到命令"
+  if ! magpie --version >/dev/null 2>&1; then
+    log_error "Magpie 安装后无法找到命令"
     return 1
   fi
 
-  log_info "cc-switch: $(cc-switch --version 2>&1)"
+  log_info "magpie: $(magpie --version 2>&1)"
 }
 
 configure_webdav() {
-  log_step "配置 cc-switch WebDAV"
+  log_step "配置 Magpie WebDAV"
   ensure_download_proxy || return $?
 
-  if ! config_command cc-switch config webdav set \
-    --base-url "$WEBDAV_BASE_URL" \
-    --remote-root "$WEBDAV_REMOTE_ROOT" \
-    --profile "$WEBDAV_PROFILE" \
-    --username "$WEBDAV_USERNAME" \
-    --password "$WEBDAV_PASSWORD" \
-    --enable \
-    --no-auto-sync; then
-    log_error "WebDAV 配置失败"
+  # Explicit empty secret fields always prompt: stdin order is deterministic,
+  # including reruns on a machine that already saved one of these secrets.
+  if ! printf '%s\n%s\n' "$WEBDAV_PASSWORD" "$BACKUP_PASSPHRASE" |
+      config_command magpie webdav on "$WEBDAV_BASE_URL" "user=$WEBDAV_USERNAME" \
+        password= passphrase= keys=yes agents=yes library=yes; then
+    # A failed first sync still enables Magpie's timer; keep this manual-only.
+    magpie webdav auto off >>"${STATE_DIR}/config-last.log" 2>&1 || true
+    log_error "WebDAV 配置/同步失败"
     return 1
   fi
-
-  if ! config_command cc-switch config webdav check-connection; then
-    log_error "WebDAV 连接检查失败"
-    return 1
-  fi
-
-  if ! config_command cc-switch config webdav download; then
-    log_error "WebDAV 下载配置失败"
-    return 1
-  fi
+  config_command magpie webdav auto off
 }
 
-import_sql_config() {
-  log_step "从 SQL 文件导入 cc-switch 配置"
-  log_info "按所选 SQL 文件替换 cc-switch 配置；由 cc-switch 自动创建备份"
-  if ! config_command python3 "${AGENT_SCRIPT_DIR}/import_sql.py" "$SQL_FILE"; then
-    log_error "SQL 配置导入失败"
+restore_backup_config() {
+  log_step "恢复本地 Magpie 加密备份"
+  if ! printf '%s\n' "$BACKUP_PASSPHRASE" | config_command magpie restore "$BACKUP_FILE"; then
+    log_error "Magpie 备份恢复失败"
     return 1
   fi
 }
@@ -363,20 +365,26 @@ config_command() {
 
 prepare_config() {
   ((SKIP_CONFIG == 0)) || return 0
-  if [[ -n "$SQL_FILE" ]]; then
-    command -v python3 >/dev/null 2>&1 || { log_error "本地 SQL 导入需要 python3"; return 2; }
-    [[ -r "${AGENT_SCRIPT_DIR}/import_sql.py" ]] || { log_error "缺少 agent/import_sql.py，请更新完整仓库"; return 2; }
-    CONFIG_FINGERPRINT="$(printf '%s\0' sql-v1 "$CC_CONFIG_DIR" "$(sha256sum "$SQL_FILE" | cut -d ' ' -f1)" | sha256sum | cut -d ' ' -f1)"
+  if [[ -z "$BACKUP_PASSPHRASE" || "$BACKUP_PASSPHRASE" == *$'\n'* || "$BACKUP_PASSPHRASE" == *$'\r'* ]]; then
+    log_error "需要非空、单行的 Magpie 加密口令；--env 模式请设置 MAGPIE_PASSPHRASE"
+    return 2
+  fi
+  if [[ -n "$BACKUP_FILE" ]]; then
+    CONFIG_FINGERPRINT="$(printf '%s\0' magpie-backup-v1 "$MAGPIE_CONFIG_DIR" "$(sha256sum "$BACKUP_FILE" | cut -d ' ' -f1)" "$BACKUP_PASSPHRASE" | sha256sum | cut -d ' ' -f1)"
   else
     if [[ -z "$WEBDAV_BASE_URL" || -z "$WEBDAV_USERNAME" || -z "$WEBDAV_PASSWORD" ]]; then
-      log_error "WebDAV 需要地址、用户名和密码；--env 模式请设置 CC_SWITCH_WEBDAV_BASE_URL、CC_SWITCH_WEBDAV_USERNAME、CC_SWITCH_WEBDAV_PASSWORD"
+      log_error "WebDAV 需要地址、用户名和密码；--env 模式请设置 MAGPIE_WEBDAV_BASE_URL、MAGPIE_WEBDAV_USERNAME、MAGPIE_WEBDAV_PASSWORD"
       return 2
     fi
     case "$WEBDAV_BASE_URL" in
       http://?*|https://?*) ;;
       *) log_error "WebDAV Base URL 必须使用 HTTP 或 HTTPS"; return 2 ;;
     esac
-    CONFIG_FINGERPRINT="$(printf '%s\0' webdav-v1 "$CC_CONFIG_DIR" "$WEBDAV_BASE_URL" "$WEBDAV_REMOTE_ROOT" "$WEBDAV_PROFILE" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" | sha256sum | cut -d ' ' -f1)"
+    if [[ "$WEBDAV_PASSWORD" == "$BACKUP_PASSPHRASE" || "$WEBDAV_PASSWORD" == *$'\n'* || "$WEBDAV_PASSWORD" == *$'\r'* ]]; then
+      log_error "WebDAV 密码须为单行，且须与加密口令不同（Magpie 要求）"
+      return 2
+    fi
+    CONFIG_FINGERPRINT="$(printf '%s\0' magpie-webdav-v1 "$MAGPIE_CONFIG_DIR" "$WEBDAV_BASE_URL" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" "$BACKUP_PASSPHRASE" | sha256sum | cut -d ' ' -f1)"
   fi
 }
 
@@ -387,16 +395,17 @@ sync_config() {
   fi
   local marker="${STATE_DIR}/config-success" saved=""
   if [[ -f "$marker" ]]; then saved="$(cat "$marker")"; fi
-  if ((REFRESH_CONFIG == 0)) && [[ "$saved" == "$CONFIG_FINGERPRINT" && -s "${CC_CONFIG_DIR}/cc-switch.db" ]]; then
-    log_info "跳过配置同步：相同来源已成功导入且本地数据库存在（更新远端内容请用 --refresh-config）"
+  if ((REFRESH_CONFIG == 0)) && [[ "$saved" == "$CONFIG_FINGERPRINT" && -s "${MAGPIE_CONFIG_DIR}/providers.json" ]]; then
+    log_info "跳过配置同步：相同来源已成功导入且 Magpie 配置存在（更新远端内容请用 --refresh-config）"
     return
   fi
   rm -f -- "$marker"
-  if [[ -n "$SQL_FILE" ]]; then import_sql_config; else configure_webdav; fi
-  if [[ ! -s "${CC_CONFIG_DIR}/cc-switch.db" ]]; then
-    log_error "配置命令完成，但未找到非空 cc-switch 数据库；不记录成功状态"
+  if [[ -n "$BACKUP_FILE" ]]; then restore_backup_config; else configure_webdav; fi
+  if [[ ! -s "${MAGPIE_CONFIG_DIR}/providers.json" ]]; then
+    log_error "配置命令完成，但未找到非空 Magpie providers.json；不记录成功状态"
     return 1
   fi
+  config_command magpie library sync
   printf '%s\n' "$CONFIG_FINGERPRINT" >"${marker}.tmp"
   mv -f -- "${marker}.tmp" "$marker"
 }
@@ -419,14 +428,16 @@ main() {
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  install_cc_switch
-  sync_config
+  install_magpie
+  # Magpie must detect installed agents before restoring their model settings.
   install_claude
   install_codex
+  sync_config
   write_bash_aliases
 
   log_step "安装完成"
   log_info "请运行 'source ~/.bashrc' 或重新登录以加载 cc/cx alias"
+  log_info "使用代理模型时保持 Magpie 网关运行：magpie serve；常驻可用 magpie daemon install"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
