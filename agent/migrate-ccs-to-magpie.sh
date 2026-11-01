@@ -11,7 +11,7 @@ LEGACY_BINARIES=()
 print_usage() {
   cat <<'EOF'
 Usage: migrate-ccs-to-magpie.sh [--env [FILE]] [--backup-file FILE]
-                               [--refresh-config] [--force]
+                               [--refresh-config] [--force] [--start-gateway] [--verify]
 
 Linux/root only, for the HOME of the client being migrated.
 Uses the same proxy and MAGPIE_* settings as install.sh (details below).
@@ -25,6 +25,8 @@ Does not convert CC Switch SQL or reuse its DAV Remote Root/Profile.
 --backup-file    Use a local encrypted Magpie backup instead of DAV.
 --force          Reinstall tools, including tools already available.
 --refresh-config Accepted for compatibility; migration always refreshes config.
+--start-gateway  Install/start the local-only user service; enable user linger.
+--verify         Also start the gateway and send one real request per agent.
 Run bash agent/install.sh --help for proxy and MAGPIE_* environment variables.
 EOF
 }
@@ -111,17 +113,22 @@ main() {
   require_clients_stopped
   find_legacy_binaries
   MIGRATION_STATE_DIR="$(mktemp -d "${STATE_DIR}/ccs-migration.XXXXXX")"
+  REFRESH_CONFIG=1
+  check_gateway_environment
+  preflight_config_source
   install_magpie
   install_claude
   install_codex
   # Migration always applies the selected source, even after a previous install.
-  REFRESH_CONFIG=1
   sync_config
+  start_gateway
+  verify_agents
   write_bash_aliases
   retire_cc_switch
   printf '%s\n' complete >"${MIGRATION_STATE_DIR}/complete"
   log_info "迁移完成；CC Switch 命令已移至 $MIGRATION_STATE_DIR/bin，旧数据/DAV 远端保留。"
   log_info "重新登录以加载 cc/cx；代理模型需要运行 magpie serve 或配置 magpie daemon install。"
+  if ((VERIFY_AGENTS == 0)); then log_info "配置迁移完成，尚未验证模型调用；可用 install.sh --verify 补做验证。"; fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

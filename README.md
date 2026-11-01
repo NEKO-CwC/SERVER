@@ -70,11 +70,14 @@ SSH 只在需要下载或 WebDAV 同步时启动，安装成功、失败或终�
 bash agent/install.sh --backup-file /secure/magpie.magpie-backup # 询问代理及加密口令
 bash agent/install.sh --skip-config                            # 只安装工具并写 aliases
 bash agent/install.sh --env --backup-file /secure/magpie.magpie-backup
+bash agent/install.sh --env /secure/agent.env --verify           # 启动常驻网关并验证两种客户端
 ```
 
 `--backup-file` 优先于环境中的配置来源。旧 `--sql-file` 会提示先迁移并导出 Magpie 原生备份；Magpie 无法直接读取 CC Switch SQL。旧 `CC_SWITCH_*` 配置变量已改为 `.env.example` 中的 `MAGPIE_*` 变量。
 
 WebDAV 使用 `magpie webdav on` 同步，登录密码和加密口令通过标准输入传入，不放在命令参数中，也不传给下载的安装程序；同步包含 API keys、agent 模型和 Library，自动同步关闭。Magpie 首次接入已有远端时采用其合并/恢复规则，可能替换本机不同的配置，并由 Magpie 保留副本。它不是只读下载工具；请连接到已经准备好的 Magpie 备份目录，不能把旧 CC Switch 数据目录当成 Magpie 备份直接使用。
+
+需要 DAV 同步时，安装工具之前先对远端备份发送只读 HEAD 请求，复用所选代理，凭据通过标准输入交给 curl。网络不可达、401/403、404 会分别提示检查路由/代理、登录权限、同步目录；此时停止，不改写 agent 配置。DAV 不支持 HEAD（405/501）时继续由 Magpie 同步确认。不强制选择 IPv4，也不自动创建代理或修改路由；仅有 IPv6 地址的 DAV 在无 IPv6 路由的机器上需要可用代理。已有相同配置成功记录且无需同步时跳过预检，本地备份来源无需访问 DAV。
 
 - 每次运行都检查工具的 `--version`；正常则跳过，缺失或不可运行则重新安装。
 - 配置成功且 Magpie 的 `providers.json` 存在时保存来源指纹；相同来源重跑跳过同步。备份内容、DAV 参数或加密口令变化会重新同步。
@@ -84,7 +87,9 @@ WebDAV 使用 `magpie webdav on` 同步，登录密码和加密口令通过标�
 
 状态默认在 `~/.local/state/neko-agent-install/`（目录权限 700）。失败配置日志可能含凭据，仅保存于此目录，成功后删除；成功指纹不包含明文凭据。`--env` 模式可用 `AGENT_INSTALL_STATE_DIR` 调整状态目录、`AGENT_BASHRC` 调整 aliases 文件。Magpie 配置位于 `${XDG_CONFIG_HOME:-~/.config}/magpie`；在环境文件中设置 `XDG_CONFIG_HOME` 可调整其父目录。
 
-使用 Magpie 代理模型时必须保持网关运行。前台可用 `magpie serve`；需要常驻时，在具备用户服务环境的系统上运行 `magpie daemon install`。安装器不自动配置系统服务或打开局域网访问。原生备份不包含订阅登录状态，换机后需重新登录订阅。
+使用 Magpie 代理模型时必须保持网关运行。默认不配置服务；前台可用 `magpie serve`。加 `--start-gateway` 会检查 systemd 用户服务环境，执行 `magpie daemon install --no-web` 并启用用户 linger，使服务在退出登录后继续运行；检查默认本机端口 3425 是否响应，不打开 Web 管理页面或局域网访问。自定义网关端口应自行管理服务。
+
+`--verify` 包含上述服务启动，并在独立临时工作目录让 Claude、Codex 各发起一次真实请求，要求返回 `MAGPIE_OK` 且不使用工具；每次调用最多 120 秒，Codex 使用临时会话。验证显式关闭标准输入，避免通过 SSH 执行时等待输入。调用按所选模型正常计费；失败日志仅写入私有状态目录，不打印凭据。默认不发送模型请求，完成时明确提示“尚未验证”。安装阶段的临时代理不会自动变成网关长期使用的代理；订阅 OAuth 登录仍需自行完成。
 
 本机迁移结果及交给 Claude Code 的 Codex 迁移说明见 [Magpie 迁移交接文档](docs/handoffs/magpie-migration-20261101.md)。
 
@@ -97,17 +102,18 @@ WebDAV 使用 `magpie webdav on` 同步，登录密码和加密口令通过标�
 ```bash
 bash agent/migrate-ccs-to-magpie.sh
 bash agent/migrate-ccs-to-magpie.sh --env /secure/agent.env
+bash agent/migrate-ccs-to-magpie.sh --env /secure/agent.env --verify
 # 离线配置源（安装缺失工具仍可能需要联网）：
 bash agent/migrate-ccs-to-magpie.sh --env /secure/agent.env --backup-file /secure/config.magpie-backup
 ```
 
 脚本检查运行进程和常见 systemd 服务，与安装器共用锁；安装缺失工具、强制恢复指定配置并同步 Library。配置回退交给 Magpie 自身，不额外归档 Claude/Codex 目录、历史会话、缓存或 CCS 数据库。迁移记录位于 `~/.local/state/neko-agent-install/ccs-migration.XXXXXX/`，目录权限 700。
 
-恢复与 aliases 写入都成功后，PATH 中的 `cc-switch` 可执行文件移到迁移状态目录的 `bin/`，原路径记录于 `binaries.tsv`；`complete` 文件表示整个脚本成功。旧 CCS 数据目录保留，以免破坏仍指向它的技能链接；旧 DAV 远端保留。脚本不转换本机 CCS 数据库，也不自动搬运仅存在于旧 CCS 的条目。自定义 shell 函数、PATH 外安装副本和自行创建的服务需要另行检查。
+恢复与 aliases 写入都成功后，PATH 中的 `cc-switch` 可执行文件移到迁移状态目录的 `bin/`，原路径记录于 `binaries.tsv`；指定了 `--start-gateway`/`--verify` 时，还须服务启动/实际调用验证成功才移除旧命令。`complete` 文件表示所选步骤全部成功，默认仅代表配置迁移成功。旧 CCS 数据目录保留，以免破坏仍指向它的技能链接；旧 DAV 远端保留。脚本不转换本机 CCS 数据库，也不自动搬运仅存在于旧 CCS 的条目。自定义 shell 函数、PATH 外安装副本和自行创建的服务需要另行检查。
 
 失败时会显示状态目录；配置恢复失败不会移除 CCS 命令，但 Magpie 可能已部分改写原生配置。修正问题后可重跑。配置回退使用 Magpie 自带功能（DAV 恢复对应 `magpie webdav undo`）；若还需恢复旧 CCS 命令，按 `binaries.tsv` 将保存的命令移回原路径。
 
-完成后重新登录加载 aliases，运行 `magpie serve` 或按需配置 `magpie daemon install`，再实际启动 Claude/Codex 核对模型和连接。迁移脚本拒绝 `--skip-config`，不会自动启动网关或替你完成订阅 OAuth 登录。
+完成后重新登录加载 aliases。未选择启动/验证选项时，需自行运行网关并核对模型和连接；已完成迁移的机器可用 `bash agent/install.sh --env /secure/agent.env --verify` 补做调用验证，相同配置会跳过 DAV 同步。迁移脚本拒绝 `--skip-config`，不自动终止正在运行的客户端，也不替你完成订阅 OAuth 登录。
 
 ## sing-box client
 

@@ -111,6 +111,18 @@ class AgentFixture(ShellTests):
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ['TEST_ROOT'])
 args = sys.argv[1:]
+if '--head' in args:
+    with (root / 'calls').open('a') as out: out.write('dav:preflight' + '\\n')
+    (root / 'preflight-args.json').write_text(json.dumps(args))
+    (root / 'preflight-stdin').write_text(sys.stdin.read())
+    (root / 'preflight-env.json').write_text(json.dumps({key: os.environ.get(key) for key in ('http_proxy', 'https_proxy', 'all_proxy')}))
+    if os.environ.get('TEST_FAIL_PREFLIGHT'):
+        print('network is unreachable', file=sys.stderr)
+        sys.exit(int(os.environ['TEST_FAIL_PREFLIGHT']))
+    print(os.environ.get('TEST_DAV_HTTP_STATUS', '200'), end='')
+    sys.exit(0)
+if '--noproxy' in args:
+    sys.exit(0)
 url = next(arg for arg in args if arg.startswith('https://'))
 tool = 'magpie' if 'usemagpie.ai' in url else ('claude' if 'claude.ai' in url else 'codex')
 with (root / 'calls').open('a') as out: out.write('download:' + tool + '\\n')

@@ -102,3 +102,32 @@ main --env "$@"
         self.migrate()
         self.assertEqual(len(list((self.backups()[0] / "bin").iterdir())), 1)
         self.assertTrue((self.backups()[0] / "complete").exists())
+
+    def test_dav_network_failure_stops_before_install_and_preserves_ccs(self):
+        self.env["TEST_FAIL_PREFLIGHT"] = "7"
+        result = self.migrate(ok=False)
+        self.assertEqual(self.calls(), ["dav:preflight"])
+        self.assertTrue(self.legacy.exists())
+        self.assertIn("IPv4/IPv6", result.stdout)
+        self.assertFalse((self.backups()[0] / "complete").exists())
+
+    def test_gateway_or_call_failure_does_not_retire_ccs(self):
+        result = self.bash('''source agent/migrate-ccs-to-magpie.sh
+check_root() { :; }
+prepare_process_env() { export PATH="$TEST_ROOT/bin:$PATH"; }
+check_gateway_environment() { :; }
+start_gateway() { return 1; }
+main --env --verify
+''', ok=False)
+        self.assertTrue(self.legacy.exists())
+        self.assertFalse((self.backups()[0] / "complete").exists())
+        self.bash('''source agent/migrate-ccs-to-magpie.sh
+check_root() { :; }
+prepare_process_env() { export PATH="$TEST_ROOT/bin:$PATH"; }
+check_gateway_environment() { :; }
+start_gateway() { :; }
+verify_agents() { return 1; }
+main --env --verify
+''', ok=False)
+        self.assertTrue(self.legacy.exists())
+        self.assertFalse(any((state / "complete").exists() for state in self.backups()))
