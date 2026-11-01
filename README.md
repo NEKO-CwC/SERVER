@@ -7,7 +7,7 @@ Linux VPS 基础初始化、Agent 安装，以及独立的 sing-box client/serve
 | 入口 | 用途 |
 | --- | --- |
 | `agent/install.sh` | 安装 Magpie、Claude Code、Codex，导入配置并写入 cc/cx aliases |
-| `agent/migrate-ccs-to-magpie.sh` | 已安装 CCS 的 Linux 客户端迁移：备份、恢复 Magpie 配置、移除旧命令 |
+| `agent/migrate-ccs-to-magpie.sh` | 已安装 CCS 的 Linux 客户端迁移：恢复 Magpie 配置、移除旧命令 |
 | `VPS/ONE_STEP_INIT.sh` | 系统包、Docker、网络设置、仓库与 MOTD 初始化 |
 | `VPS/singbox/client/install.sh` | 获取 Xboard 订阅配置，部署客户端与 SSH/HTTP/HTTPS/Tailscale bypass |
 | `VPS/singbox/server/install.sh` | 从本地文件或远程文件地址部署服务端 |
@@ -101,11 +101,11 @@ bash agent/migrate-ccs-to-magpie.sh --env /secure/agent.env
 bash agent/migrate-ccs-to-magpie.sh --env /secure/agent.env --backup-file /secure/config.magpie-backup
 ```
 
-脚本检查运行进程和常见 systemd 服务，与安装器共用锁；先把旧 CCS 数据、Claude/Codex 原生目录、共享 `.agents`、Magpie 配置及 bashrc 备份到 `~/.local/state/neko-agent-install/ccs-migration.XXXXXX/client.tar`，然后安装缺失工具、强制恢复指定配置并同步 Library。完整备份包含会话和凭据，请预留磁盘空间；目录权限 700、归档权限 600。自定义 `CC_SWITCH_CONFIG_DIR`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 也纳入备份；根目录链接及其目标分别备份，内部技能链接保留链接形式。
+脚本检查运行进程和常见 systemd 服务，与安装器共用锁；安装缺失工具、强制恢复指定配置并同步 Library。配置回退交给 Magpie 自身，不额外归档 Claude/Codex 目录、历史会话、缓存或 CCS 数据库。迁移记录位于 `~/.local/state/neko-agent-install/ccs-migration.XXXXXX/`，目录权限 700。
 
-恢复与 aliases 写入都成功后，PATH 中的 `cc-switch` 可执行文件移到备份的 `bin/`，原路径记录于 `binaries.tsv`；`complete` 文件表示整个脚本成功。旧 CCS 数据目录保留，以免破坏仍指向它的技能链接；旧 DAV 远端保留。脚本不转换本机 CCS 数据库，也不自动搬运仅存在于旧 CCS 的条目。自定义 shell 函数、PATH 外安装副本和自行创建的服务需要另行检查。
+恢复与 aliases 写入都成功后，PATH 中的 `cc-switch` 可执行文件移到迁移状态目录的 `bin/`，原路径记录于 `binaries.tsv`；`complete` 文件表示整个脚本成功。旧 CCS 数据目录保留，以免破坏仍指向它的技能链接；旧 DAV 远端保留。脚本不转换本机 CCS 数据库，也不自动搬运仅存在于旧 CCS 的条目。自定义 shell 函数、PATH 外安装副本和自行创建的服务需要另行检查。
 
-失败时会显示备份目录，不自动覆盖回退；配置恢复失败不会移除 CCS 命令，但 Magpie 可能已部分改写原生配置。修正问题后可重跑，每次建立独立备份。需要回退时先停止相关客户端和网关，查看 `paths.txt`、用 `tar -tf /实际备份目录/client.tar` 核对内容，把要恢复的现有目录移到别处，再用 `tar -C / -xpf /实际备份目录/client.tar` 恢复归档；按 `binaries.tsv` 将保存的命令移回原路径。归档覆盖解压不会清除后来新增文件，因此应先移走相关配置目录，不能只解压后就认为已完整回退。
+失败时会显示状态目录；配置恢复失败不会移除 CCS 命令，但 Magpie 可能已部分改写原生配置。修正问题后可重跑。配置回退使用 Magpie 自带功能（DAV 恢复对应 `magpie webdav undo`）；若还需恢复旧 CCS 命令，按 `binaries.tsv` 将保存的命令移回原路径。
 
 完成后重新登录加载 aliases，运行 `magpie serve` 或按需配置 `magpie daemon install`，再实际启动 Claude/Codex 核对模型和连接。迁移脚本拒绝 `--skip-config`，不会自动启动网关或替你完成订阅 OAuth 登录。
 

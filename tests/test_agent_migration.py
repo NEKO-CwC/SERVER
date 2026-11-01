@@ -1,5 +1,3 @@
-import tarfile
-
 from test_installers import AgentFixture
 
 
@@ -28,17 +26,13 @@ main --env "$@"
     def backups(self):
         return sorted((self.root / "state").glob("ccs-migration.*"))
 
-    def test_success_backs_up_before_sync_and_retires_all_path_binaries(self):
+    def test_success_retires_all_path_binaries_without_archiving_config(self):
         extra = self.script("extra/cc-switch", "#!/bin/sh\necho another\n")
         self.env["PATH"] = str(extra.parent) + ":" + self.env["PATH"]
         self.migrate()
         backup, = self.backups()
         self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
-        self.assertEqual((backup / "client.tar").stat().st_mode & 0o777, 0o600)
-        with tarfile.open(backup / "client.tar") as archive:
-            name = str(self.home / ".claude/settings.json").lstrip("/")
-            self.assertEqual(archive.extractfile(name).read(), b'{"original":true}')
-            self.assertIn(str(self.root / "bashrc").lstrip("/"), archive.getnames())
+        self.assertFalse((backup / "client.tar").exists())
         self.assertFalse(self.legacy.exists())
         self.assertFalse(extra.exists())
         self.assertEqual(len(list((backup / "bin").iterdir())), 2)
@@ -47,7 +41,7 @@ main --env "$@"
         self.assertIn("webdav:on", self.calls())
         self.assertIn("library:sync", self.calls())
 
-    def test_sync_failure_keeps_ccs_and_original_backup_then_retry_succeeds(self):
+    def test_sync_failure_keeps_ccs_then_retry_succeeds(self):
         self.env["TEST_FAIL_CONFIG"] = "library:sync"
         self.migrate(ok=False)
         self.assertTrue(self.legacy.exists())
@@ -92,22 +86,14 @@ main --env "$@"
         self.assertEqual(self.backups(), [])
         self.assertFalse((self.root / "calls").exists())
 
-    def test_linked_native_config_backs_up_target_data(self):
+    def test_native_history_is_not_read_for_backup(self):
         native = self.home / ".claude"
-        target = self.root / "native-claude"
-        native.rename(target)
-        native.symlink_to(target, target_is_directory=True)
+        history = native / "history.jsonl"
+        history.write_text("history remains here")
+        self.script("bin/tar", "#!/bin/sh\ntouch \"$TEST_ROOT/archive-attempt\"\nexit 1\n")
         self.migrate()
-        with tarfile.open(self.backups()[0] / "client.tar") as archive:
-            self.assertTrue(archive.getmember(str(native).lstrip("/")).issym())
-            data = archive.extractfile(str(target / "settings.json").lstrip("/"))
-            self.assertEqual(data.read(), b'{"original":true}')
-
-    def test_backup_failure_prevents_download_and_uninstall(self):
-        self.script("bin/tar", "#!/bin/sh\nexit 1\n")
-        self.migrate(ok=False)
-        self.assertTrue(self.legacy.exists())
-        self.assertFalse((self.root / "calls").exists())
+        self.assertEqual(history.read_text(), "history remains here")
+        self.assertFalse((self.root / "archive-attempt").exists())
 
     def test_duplicate_and_linked_path_directories_retire_binary_once(self):
         linked_bin = self.root / "linked-bin"

@@ -5,7 +5,7 @@ set -euo pipefail
 # Magpie configuration. This is not a cc-switch database converter.
 MIGRATION_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${MIGRATION_SCRIPT_DIR}/install.sh"
-MIGRATION_BACKUP_DIR=""
+MIGRATION_STATE_DIR=""
 LEGACY_BINARIES=()
 
 print_usage() {
@@ -16,8 +16,8 @@ Usage: migrate-ccs-to-magpie.sh [--env [FILE]] [--backup-file FILE]
 Linux/root only, for the HOME of the client being migrated.
 Uses the same proxy and MAGPIE_* settings as install.sh (details below).
 Before running, close Claude/Codex and stop CC Switch and Magpie services.
-Backs up local agent/config directories, restores prepared Magpie config,
-then moves every cc-switch executable on PATH into the backup directory.
+Restores prepared Magpie config, then moves every cc-switch executable on
+PATH into the migration state directory. Config rollback is managed by Magpie.
 Legacy ~/.cc-switch data stays in place so existing skill links still work.
 Does not convert CC Switch SQL or reuse its DAV Remote Root/Profile.
 --skip-config is rejected: migration requires a Magpie configuration source.
@@ -67,60 +67,13 @@ find_legacy_binaries() {
   done
 }
 
-backup_client() {
-  local path resolved relative existing duplicate
-  local -a paths=() candidates=(
-    "${HOME:-/root}/.cc-switch"
-    "${CC_SWITCH_CONFIG_DIR:-${HOME:-/root}/.cc-switch}"
-    "${HOME:-/root}/.claude" "${CLAUDE_CONFIG_DIR:-${HOME:-/root}/.claude}"
-    "${HOME:-/root}/.claude.json"
-    "${HOME:-/root}/.codex" "${CODEX_HOME:-${HOME:-/root}/.codex}"
-    "${HOME:-/root}/.agents" "$MAGPIE_CONFIG_DIR" "$BASHRC_FILE"
-    "${STATE_DIR}/config-success"
-  )
-  # Native config roots may themselves be links (or have linked parents).
-  # Save both the link and the data Magpie can change through it.
-  for path in "${candidates[@]}"; do
-    if [[ -e "$path" ]]; then
-      resolved="$(realpath -e -- "$path")"
-      if [[ "$resolved" != "$(realpath -sm -- "$path")" ]]; then
-        candidates+=("$resolved")
-      fi
-    fi
-  done
-  MIGRATION_BACKUP_DIR="$(mktemp -d "${STATE_DIR}/ccs-migration.XXXXXX")"
-  for path in "${candidates[@]}"; do
-    path="$(realpath -sm -- "$path")"
-    if [[ ! -e "$path" && ! -L "$path" ]]; then continue; fi
-    # The archive must never contain itself through a custom parent path.
-    if [[ "$MIGRATION_BACKUP_DIR/" == "$path/"* ]]; then
-      log_error "备份目标包含迁移状态目录；请将 AGENT_INSTALL_STATE_DIR 设到配置目录之外"
-      return 2
-    fi
-    relative="${path#/}"
-    duplicate=0
-    for existing in "${paths[@]}"; do
-      if [[ "$relative" == "$existing" ]]; then duplicate=1; break; fi
-    done
-    if ((duplicate == 0)); then paths+=("$relative"); fi
-  done
-  # Do not dereference symlinks: old skill links and binary links must survive.
-  if ((${#paths[@]})); then
-    tar -C / -cpf "${MIGRATION_BACKUP_DIR}/client.tar" -- "${paths[@]}"
-  else
-    tar -cpf "${MIGRATION_BACKUP_DIR}/client.tar" --files-from /dev/null
-  fi
-  printf '%s\n' "${paths[@]}" >"${MIGRATION_BACKUP_DIR}/paths.txt"
-  log_info "本地完整备份：${MIGRATION_BACKUP_DIR}/client.tar（含凭据，请妥善保管）"
-}
-
 retire_cc_switch() {
   local binary index=0
-  install -d -m 0700 "${MIGRATION_BACKUP_DIR}/bin"
+  install -d -m 0700 "${MIGRATION_STATE_DIR}/bin"
   for binary in "${LEGACY_BINARIES[@]}"; do
     index=$((index + 1))
-    printf '%s\t%s\n' "bin/cc-switch.$index" "$binary" >>"${MIGRATION_BACKUP_DIR}/binaries.tsv"
-    mv -- "$binary" "${MIGRATION_BACKUP_DIR}/bin/cc-switch.$index"
+    printf '%s\t%s\n' "bin/cc-switch.$index" "$binary" >>"${MIGRATION_STATE_DIR}/binaries.tsv"
+    mv -- "$binary" "${MIGRATION_STATE_DIR}/bin/cc-switch.$index"
   done
   hash -r
 }
@@ -128,8 +81,8 @@ retire_cc_switch() {
 migration_exit() {
   local result=$?
   cleanup_proxy
-  if ((result != 0)) && [[ -n "$MIGRATION_BACKUP_DIR" ]]; then
-    log_error "迁移未完成；本地备份位于 $MIGRATION_BACKUP_DIR。请核对原生配置后重试。"
+  if ((result != 0)) && [[ -n "$MIGRATION_STATE_DIR" ]]; then
+    log_error "迁移未完成；状态目录：$MIGRATION_STATE_DIR。配置回退请使用 Magpie。"
   fi
 }
 
@@ -139,7 +92,7 @@ main() {
   check_root
   check_linux
   check_commands
-  for command in tar realpath pgrep; do
+  for command in realpath pgrep; do
     command -v "$command" >/dev/null || { log_error "迁移需要 $command"; return 2; }
   done
   umask 077
@@ -157,7 +110,7 @@ main() {
   trap 'exit 143' TERM
   require_clients_stopped
   find_legacy_binaries
-  backup_client
+  MIGRATION_STATE_DIR="$(mktemp -d "${STATE_DIR}/ccs-migration.XXXXXX")"
   install_magpie
   install_claude
   install_codex
@@ -166,8 +119,8 @@ main() {
   sync_config
   write_bash_aliases
   retire_cc_switch
-  printf '%s\n' complete >"${MIGRATION_BACKUP_DIR}/complete"
-  log_info "迁移完成；CC Switch 命令已移入备份，旧数据/DAV 远端保留。"
+  printf '%s\n' complete >"${MIGRATION_STATE_DIR}/complete"
+  log_info "迁移完成；CC Switch 命令已移至 $MIGRATION_STATE_DIR/bin，旧数据/DAV 远端保留。"
   log_info "重新登录以加载 cc/cx；代理模型需要运行 magpie serve 或配置 magpie daemon install。"
 }
 
