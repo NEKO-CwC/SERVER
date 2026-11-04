@@ -11,6 +11,7 @@ STARTUP_STABILITY_SECONDS=5
 INSTALL_BIN="/usr/local/lib/sing-box-client/sing-box"
 CONFIG_DIR="/etc/sing-box-client"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
+CONFIG_OVERRIDE_FILE="${CONFIG_DIR}/config.override.json"
 BYPASS_FILE="${CONFIG_DIR}/bypass.sh"
 BYPASS_UNIT="/etc/systemd/system/sing-box-client-bypass.service"
 SINGBOX_UNIT="/etc/systemd/system/sing-box-client.service"
@@ -24,6 +25,10 @@ STAGED_CONFIG=""
 CLI_SUBSCRIPTION_URL=""
 SINGBOX_LIB_SOURCE=""
 SINGBOX_FROM_ARCHIVE=0
+INSTALL_PENDING=0
+PREVIOUS_ACTIVE=0
+PREVIOUS_ENABLED=0
+ROLLBACK_FILES=()
 
 source "${SCRIPT_DIR}/../common.sh"
 
@@ -60,6 +65,13 @@ cleanup_tmpdir() {
 }
 
 cleanup() {
+  if ((INSTALL_PENDING)); then
+    if ! rollback_install; then
+      error "Rollback incomplete. Recovery files retained at ${TMP_DIR}/rollback."
+      cleanup_proxy
+      return 1
+    fi
+  fi
   cleanup_proxy
   cleanup_tmpdir
 }
@@ -165,6 +177,15 @@ stage_config() {
   info "Downloading the subscription with User-Agent: sing-box/${SINGBOX_VERSION}..."
   download_file "${staged_config}" "${subscription_url}" --user-agent "sing-box/${SINGBOX_VERSION}"
 
+  if [[ -e "${CONFIG_OVERRIDE_FILE}" || -L "${CONFIG_OVERRIDE_FILE}" ]]; then
+    info "Merging host configuration from ${CONFIG_OVERRIDE_FILE}..."
+    if ! "${staged_bin}" merge "${TMP_DIR}/merged.json" -c "${staged_config}" -c "${CONFIG_OVERRIDE_FILE}"; then
+      error "Host configuration merge failed; the installed configuration was not changed."
+      return 1
+    fi
+    staged_config="${TMP_DIR}/merged.json"
+  fi
+
   info "Validating the downloaded configuration with ${version_header} (${staged_bin})..."
   if ! "${staged_bin}" check -c "${staged_config}"; then
     if [[ "${version_header}" =~ ^sing-box\ version\ ([0-9]+)\.([0-9]+)\. ]] &&
@@ -236,6 +257,56 @@ backup_config() {
   backup_file="${CONFIG_FILE}.bak-$(date +%Y%m%d-%H%M%S)-$$"
   info "Backing up the current config to ${backup_file}..."
   cp -a "${CONFIG_FILE}" "${backup_file}"
+}
+
+snapshot_install() {
+  local index=0 path
+  ROLLBACK_FILES=("${CONFIG_FILE}" "${BYPASS_FILE}" "${SINGBOX_UNIT}" "${BYPASS_UNIT}"
+    "${INSTALL_BIN}" "$(dirname "${INSTALL_BIN}")/libcronet.so")
+  mkdir -m 0700 "${TMP_DIR}/rollback"
+  for path in "${ROLLBACK_FILES[@]}"; do
+    if [[ -e "$path" || -L "$path" ]]; then
+      cp -a -- "$path" "${TMP_DIR}/rollback/${index}"
+    fi
+    index=$((index + 1))
+  done
+  if systemctl is-active --quiet sing-box-client.service; then PREVIOUS_ACTIVE=1; fi
+  if systemctl is-enabled --quiet sing-box-client.service; then PREVIOUS_ENABLED=1; fi
+  INSTALL_PENDING=1
+}
+
+rollback_install() {
+  local index=0 path failed=0
+  INSTALL_PENDING=0
+  warn "Installation failed; restoring previous client files and service state."
+  # Do not replace an executable or its library while the new client is running.
+  if ! systemctl stop sing-box-client.service sing-box-client-bypass.service; then
+    # A first install can fail before either unit exists. Only a still-running
+    # client/bypass must prevent file restoration.
+    if systemctl is-active --quiet sing-box-client.service sing-box-client-bypass.service; then
+      return 1
+    fi
+  fi
+  if ((PREVIOUS_ENABLED == 0)) && [[ -e "${SINGBOX_UNIT}" ]]; then
+    systemctl disable sing-box-client.service || return 1
+  fi
+  for path in "${ROLLBACK_FILES[@]}"; do
+    if [[ -e "${TMP_DIR}/rollback/${index}" || -L "${TMP_DIR}/rollback/${index}" ]]; then
+      cp -a -- "${TMP_DIR}/rollback/${index}" "${path}.restore" &&
+        mv -f -- "${path}.restore" "$path" || failed=1
+    else
+      rm -f -- "$path" || failed=1
+    fi
+    index=$((index + 1))
+  done
+  ((failed == 0)) || return 1
+  systemctl daemon-reload || return 1
+  if ((PREVIOUS_ENABLED)); then
+    systemctl enable sing-box-client.service || return 1
+  fi
+  if ((PREVIOUS_ACTIVE)); then
+    systemctl restart sing-box-client.service || return 1
+  fi
 }
 
 install_files() {
@@ -332,8 +403,10 @@ main() {
   stage_config "${STAGED_BIN}" "${subscription_url}"
   cleanup_proxy
   render_systemd_units
+  snapshot_install
   install_files "${STAGED_CONFIG}"
   start_services
+  INSTALL_PENDING=0
 
   info "sing-box ${SINGBOX_VERSION} installation completed."
   "${INSTALL_BIN}" version

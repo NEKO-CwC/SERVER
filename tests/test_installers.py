@@ -365,6 +365,7 @@ install_binary
         self.script("installed/sing-box", "#!/usr/bin/env python3\nimport sys\nprint('sing-box version 1.13.13')\n")
         (self.root / "installed/libcronet.so").write_text("installed-libcronet")
         self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 SINGBOX_VERSION=1.13.13
 TMP_DIR="$TEST_ROOT/stage"
 INSTALL_BIN="$TEST_ROOT/installed/sing-box"
@@ -382,6 +383,7 @@ install_binary
                     "#!/usr/bin/env python3\nimport sys\nprint('sing-box version 1.13.13')\n")
         (self.root / "stage/sing-box-1.13.13-linux-amd64/libcronet.so").write_text("downloaded-libcronet")
         result = self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 SINGBOX_VERSION=1.13.13
 TMP_DIR="$TEST_ROOT/stage"
 INSTALL_BIN="$TEST_ROOT/installed/sing-box"
@@ -410,6 +412,7 @@ stage_singbox amd64
     def test_install_binary_leaves_no_library_when_the_archive_had_none(self):
         (self.root / "old-binary").write_text("old-version")
         self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 INSTALL_BIN="$TEST_ROOT/installed/sing-box"
 STAGED_BIN="$TEST_ROOT/old-binary"
 SINGBOX_LIB_SOURCE=""
@@ -425,6 +428,7 @@ install_binary
         (installed / "libcronet.so").write_text("stale-libcronet")
         (self.root / "new-binary").write_text("new-version")
         self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 INSTALL_BIN="$TEST_ROOT/installed/sing-box"
 STAGED_BIN="$TEST_ROOT/new-binary"
 SINGBOX_LIB_SOURCE=""
@@ -439,6 +443,7 @@ install_binary
         installed.mkdir()
         (installed / "libcronet.so").write_text("installed-libcronet")
         self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 INSTALL_BIN="$TEST_ROOT/installed/sing-box"
 STAGED_BIN="$INSTALL_BIN"
 SINGBOX_FROM_ARCHIVE=0
@@ -453,6 +458,7 @@ require_legacy_stopped
 
     def test_client_invalid_subscription_preserves_files(self):
         self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 TMP_DIR="$TEST_ROOT/stage"
 CONFIG_FILE="$TEST_ROOT/config/config.json"
 download_file() { printf 'invalid' >"$1"; }
@@ -469,6 +475,7 @@ else:
     sys.exit(1)
 ''')
         result = self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 SINGBOX_VERSION=1.13.15
 TMP_DIR="$TEST_ROOT/stage"
 CONFIG_FILE="$TEST_ROOT/config/config.json"
@@ -484,6 +491,7 @@ stage_config "$INSTALL_BIN" https://subscription.example.invalid
 
     def test_client_generic_validation_failure_does_not_report_version_mismatch(self):
         result = self.bash('''source VPS/singbox/client/install.sh
+CONFIG_OVERRIDE_FILE="$TEST_ROOT/config/config.override.json"
 TMP_DIR="$TEST_ROOT/stage"
 download_file() { printf 'invalid' >"$1"; }
 stage_config "$TEST_ROOT/binary" https://subscription.example.invalid

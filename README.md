@@ -126,6 +126,16 @@ bash VPS/singbox/client/install.sh --env .env # 读取代理和 SUBSCRIPTION_URL
 
 订阅请求使用带内核版本的 `User-Agent: sing-box/1.14.4`（覆盖 `SINGBOX_VERSION` 时同步变化），Xboard 必须返回该版本可直接运行的完整 JSON。每次执行都会获取并校验配置，校验成功后备份旧配置、替换并重启。已安装且版本匹配的二进制会复用；若已装内核缺少 `libcronet.so`（旧安装器只复制了可执行文件），安装器会重新下载压缩包补上该库。默认版本为 `1.14.4`。
 
+需要持久化本机出口等配置时，在仓库外创建 `/etc/sing-box-client/config.override.json`（建议权限 `600`）。安装器使用当前版本的 `sing-box merge` 合并订阅与此文件，再校验最终配置；合并或校验失败不修改运行文件。例如，多网卡机器存在断链的默认出口时，可明确指定实际可用接口：
+
+```json
+{"route":{"auto_detect_interface":false,"default_interface":"eth0"}}
+```
+
+将 `eth0` 替换为本机接口；不要把某台机器的接口名写入通用订阅模板。覆盖文件遵循 sing-box 的合并语义，推荐用于标量字段；数组不是按 `tag` 修改单个节点的补丁。原订阅和覆盖文件均保持原样，最终运行配置保存到 `config.json`。
+
+客户端安装前会暂存旧配置、二进制、动态库、bypass 脚本和两个自有 unit。替换或启动失败时，自动恢复这些文件及客户端原来的启用/运行状态；首次安装失败则移除本次创建的文件并禁用客户端。恢复失败会保留恢复目录并报出路径。回退不包含订阅外的 systemd drop-in、DNS/CNI 配置或运行缓存；若这些本机配置本身有错，恢复旧文件也不能保证旧服务可启动。
+
 `naive` 出站通过动态加载 `libcronet.so` 工作，sing-box 只在该可执行文件所在目录查找它。上游 1.13.0 起把该库放进发布压缩包，因此安装器现在把 `sing-box` 和 `libcronet.so` 一起装到 `/usr/local/lib/sing-box-client/`。缺少此库时，含 `naive` 节点的订阅会在校验阶段报 `initialize outbound[N]: cronet: library not found`。
 
 安装前无需运行 sing-box：选择 SSH 代理时，安装器用系统 OpenSSH 建立独立 SOCKS 隧道，供依赖安装、GitHub 二进制和订阅配置下载使用。下载与校验完成后关闭隧道，再安装文件并启动客户端。SSH 模式需要预先具备 OpenSSH 客户端；无法通过尚未建立的 SSH 隧道安装 SSH 自身。Debian/Ubuntu 的 APT 支持这里使用的 `socks5h` 代理环境。
@@ -188,6 +198,8 @@ systemctl disable --now sing-box.service bypass.service
 ```
 
 新版安装器会拒绝仍启用或运行的旧 systemd 服务。旧 Docker 部署请先在原部署目录执行 `docker compose down`；若使用单独的 sub-store 容器，按需停止它。新版不会删除旧容器、配置或服务文件，也不会自动把旧生产配置提交回仓库。停止旧客户端可能改变连接路径，应通过仍可用的 SSH/Tailscale 通道操作。
+
+安装器只管理 `sing-box-client.service` 和 `sing-box-client-bypass.service`。本机另加的 DNS guard、site bypass、审计和定时器必须单独核对：DNS guard 的接口名应与新订阅的 TUN `interface_name` 一致，审计应读取新服务日志；旧定时器需停止、禁用并按需归档。保留在 `*.service.d/` 中的 drop-in 在重装后仍会生效，单纯重跑安装器不能修复这些本机设置。确认不再被引用后再归档旧 unit；不要直接删除仍服务于 K8s/CNI 或内网入口的规则。
 
 旧目录 `client_config/`、`server_config/` 已由 `client/`、`server/` 替代；所有脚本都应从完整仓库运行。
 
